@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local data: sqlite db + saved login sessions (contain auth cookies — never commit)
+data/*.db
+data/*.json
+!data/.gitkeep
+
+.env

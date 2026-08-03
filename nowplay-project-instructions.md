@@ -20,9 +20,13 @@ everything he's queued up across services in one place.
   - **Amazon Prime Video** — has a Watchlist page, scrapeable, but also runs its own
     bot detection. Moderate difficulty, between the other two.
 - Netflix's official "Download your personal information" bulk export exists but is
-  request-based (can take hours to 30 days), oriented around viewing history rather
-  than a live watchlist, and it's unconfirmed whether it reliably includes "My List"
-  as a discrete field — needs verifying directly rather than assumed.
+  request-based (can take up to 30 days) and, per Netflix's own Help Center
+  (help.netflix.com/en/node/100624, checked 2026-08-03), the data it covers is
+  scoped to "Content Interaction History" — viewing activity and content you've
+  rated. Netflix's own description does not list "My List" / watchlist as a
+  category included in the export. Treat this as a live-scraping-only project;
+  the bulk export is not a reliable watchlist source and shouldn't be relied on
+  as a fallback without first requesting an actual export and inspecting it.
 - Third-party aggregators (e.g. Simkl) only auto-sync Netflix among these three,
   because Disney+ and Prime don't expose an accessible watch-history/watchlist
   surface their tooling can reliably use. This is a useful sanity check that we're
@@ -38,6 +42,13 @@ everything he's queued up across services in one place.
   heavily-targeted signature.
 - **Mode**: run headed (not headless) rather than headless — closes a distinct
   class of detection signals independent of the engine choice.
+- **Caveat (2026-08-03 check)**: this covers JS-level and CDP-level signals, but
+  commercial anti-bot vendors (Cloudflare, DataDome, Akamai — plausible on
+  Disney+/Prime) also fingerprint at the TLS layer (JA3/JA4 hash), which no
+  amount of headed/Firefox JS-level tuning changes. Netflix, Disney+, and Prime's
+  specific anti-bot stack isn't confirmed here — this is a real gap in the
+  approach, not just a theoretical one, and is the most likely reason a scraper
+  could get flagged even with everything above done correctly.
 - **Auth**: log in once manually, persist the session (Playwright `storageState`),
   and reuse it across runs rather than automating login each time. Repeated
   automated logins are far more likely to trigger MFA challenges or bot flags than
@@ -54,13 +65,20 @@ everything he's queued up across services in one place.
   Netflix has been relatively stable; Disney+ and Amazon Prime will need more
   ongoing upkeep.
 
-## Open questions / not yet decided
-- Final choice of storage (SQLite vs Postgres) and front end.
-- Whether to attempt Disney+/Amazon Prime scraping at all initially, or start with
-  Netflix only and evaluate from there given the higher difficulty/maintenance cost
-  of the other two.
-- Whether Netflix's bulk personal-data export is worth using as a supplementary or
-  fallback data source alongside live scraping.
+## Decisions (2026-08-03)
+- **Scope**: Netflix only for the initial build. Prove the pipeline end-to-end
+  before deciding whether Disney+/Prime are worth the added maintenance cost.
+- **Storage**: SQLite. Single user, low volume (hundreds of titles, not
+  millions), running on a home lab box — a Postgres server is unneeded
+  operational overhead for this. Revisit only if the project grows into a
+  multi-user or multi-service consumer of the data.
+- **Front end**: none yet. Query the SQLite DB directly / via CLI for now;
+  revisit once the scraper is proven reliable.
+- **Language/tooling**: Python + Playwright (Python bindings), stdlib `sqlite3`
+  — no framework, no ORM, kept minimal on purpose for a personal single-user
+  tool.
+- Netflix's bulk personal-data export is **not** being used as a fallback —
+  see finding above; it doesn't appear to cover watchlist data.
 
 ## Working style for this project
 - Conclusions-first, structured responses.
