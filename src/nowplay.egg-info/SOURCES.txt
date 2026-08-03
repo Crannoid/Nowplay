@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+src/nowplay/__init__.py
+src/nowplay/cli.py
+src/nowplay/db.py
+src/nowplay.egg-info/PKG-INFO
+src/nowplay.egg-info/SOURCES.txt
+src/nowplay.egg-info/dependency_links.txt
+src/nowplay.egg-info/requires.txt
+src/nowplay.egg-info/top_level.txt
+src/nowplay/scrapers/__init__.py
+src/nowplay/scrapers/base.py
+src/nowplay/scrapers/netflix.py
