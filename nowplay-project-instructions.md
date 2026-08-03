@@ -104,12 +104,22 @@ What I could confirm before writing any code (searched, not assumed):
   any of these, that's a real ceiling on what this approach can evade, not
   just a theoretical one.
 
-Given the gaps above, the Disney+ scraper is being built as a **discovery
-tool first, extractor second**: it navigates by clicking the "Watchlist" nav
-link (accessible-name based, not a guessed URL) and dumps the resulting
-page's HTML + a screenshot to `data/disney_plus_debug/` rather than guessing
-selectors with false confidence. Real selectors get written once we've both
-looked at real output from Paul's actual account.
+Given the gaps above, the Disney+ scraper was built as a **discovery tool
+first, extractor second**: rather than guessing selectors, it dumped a real
+page HTML + screenshot to `data/disney_plus_debug/` for inspection first.
+
+**Update (2026-08-03, same day):** confirmed from real output —
+- Watchlist selectors: `a[data-testid="set-item"]`, title parsed from
+  `aria-label` (format: `"<Title>[ <badge>] Select for details on this
+  title."` — badges like "Disney+ Original"/"Hulu Original Series" get
+  stripped; see KNOWN_BADGES in `disney_plus.py` for the caveat that this
+  list isn't exhaustive).
+- Watchlist URL: `https://www.disneyplus.com/en-gb/browse/watchlist`
+  (confirmed directly from Paul's session). The initial click-based nav
+  approach ("find and click the Watchlist link") turned out to be
+  unreliable in practice — likely SPA hydration/timing flakiness — so
+  direct navigation replaced it. Note the `en-gb` locale segment is
+  specific to Paul's account region.
 
 ## Working style for this project
 - Conclusions-first, structured responses.

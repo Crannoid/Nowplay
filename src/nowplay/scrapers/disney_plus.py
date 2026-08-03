@@ -9,8 +9,7 @@ before "Select for details..." — see KNOWN_BADGES).
 
 If this stops finding items, Disney+ has likely changed the DOM. Fall back to
 DISCOVER mode by setting TITLE_CARD_SELECTOR = None below — that navigates to
-the watchlist via the "Watchlist" nav link (accessible-name based, not a
-guessed URL) and dumps a fresh page HTML + screenshot to
+WATCHLIST_URL and dumps a fresh page HTML + screenshot to
 data/disney_plus_debug/ instead of extracting, so selectors can be
 re-confirmed against real output rather than re-guessed.
 
@@ -25,6 +24,16 @@ from nowplay.db import WatchlistItem
 from nowplay.scrapers.base import PlatformScraper, STATE_DIR
 
 DEBUG_DIR = STATE_DIR / "disney_plus_debug"
+
+# Confirmed directly from Paul's session (2026-08-03) after the earlier
+# click-based nav ("find and click the Watchlist link") turned out to be
+# unreliable — likely SPA hydration/timing flakiness. Direct navigation is
+# simpler and doesn't depend on the nav bar having finished rendering.
+#
+# NOTE: includes an "en-gb" locale segment, specific to Paul's account
+# region. If this is ever reused on a different-region account, or Disney+
+# changes locale routing, this may need updating.
+WATCHLIST_URL = "https://www.disneyplus.com/en-gb/browse/watchlist"
 
 TITLE_CARD_SELECTOR: str | None = 'a[data-testid="set-item"]'
 
@@ -46,9 +55,7 @@ class DisneyPlusScraper(PlatformScraper):
     platform = "disney_plus"
 
     def watchlist_url(self) -> str:
-        # No confirmed direct URL — start on the homepage and navigate via
-        # the nav link instead. This is only used as a fallback landing page.
-        return "https://www.disneyplus.com/"
+        return WATCHLIST_URL
 
     def run(self) -> list[WatchlistItem]:
         self.require_saved_session()
@@ -59,8 +66,6 @@ class DisneyPlusScraper(PlatformScraper):
             context = browser.new_context(storage_state=str(self.state_path))
             page = context.new_page()
             page.goto(self.watchlist_url(), wait_until="networkidle")
-
-            self._navigate_to_watchlist(page)
 
             if TITLE_CARD_SELECTOR is None:
                 self._dump_debug_artifacts(page)
@@ -76,22 +81,6 @@ class DisneyPlusScraper(PlatformScraper):
             items = self.extract(page)
             browser.close()
         return items
-
-    def _navigate_to_watchlist(self, page) -> None:
-        """Click the nav link/button whose accessible name is 'Watchlist'.
-
-        More robust than a hard-coded URL guess, since we don't have a
-        confirmed watchlist URL for Disney+.
-        """
-        try:
-            page.get_by_role("link", name="Watchlist", exact=False).first.click(timeout=10_000)
-            page.wait_for_load_state("networkidle")
-        except Exception as e:
-            print(
-                f"disney_plus: couldn't find/click a 'Watchlist' nav link "
-                f"({e!r}). Dumping the homepage as-is so we can see what's "
-                f"actually on the page."
-            )
 
     def _dump_debug_artifacts(self, page) -> None:
         DEBUG_DIR.mkdir(parents=True, exist_ok=True)
