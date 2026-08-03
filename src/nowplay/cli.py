@@ -12,10 +12,12 @@ from __future__ import annotations
 import sys
 
 from nowplay import db
+from nowplay.scrapers.disney_plus import DisneyPlusScraper
 from nowplay.scrapers.netflix import NetflixScraper
 
 SCRAPERS = {
     "netflix": NetflixScraper,
+    "disney_plus": DisneyPlusScraper,
 }
 
 
@@ -29,9 +31,9 @@ def cmd_scrape(platform: str) -> None:
 
     if not items:
         print(
-            f"Scraper for '{platform}' found 0 items. Either the watchlist is "
-            f"genuinely empty, or the selectors are stale — see scrapers/{platform}.py "
-            f"for how to check."
+            f"Scraper for '{platform}' found 0 items (see any message above for why — "
+            f"e.g. discovery mode, stale selectors, or a genuinely empty watchlist). "
+            f"Check scrapers/{platform}.py."
         )
         return
 

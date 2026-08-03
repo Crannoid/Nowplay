@@ -20,7 +20,8 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 
 LOGIN_URLS = {
     "netflix": "https://www.netflix.com/login",
-    # disney_plus / prime_video intentionally not added yet — Netflix-only scope for now.
+    "disney_plus": "https://www.disneyplus.com/identity/login",
+    # prime_video intentionally not added yet — not in scope yet.
 }
 
 

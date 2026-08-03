@@ -1,16 +1,16 @@
 # Nowplay
 
-Personal tool to pull your Netflix "My List" watchlist into a local SQLite
-database, so you can see it outside the Netflix app. Scoped to Netflix only
-for now — see `nowplay-project-instructions.md` for the full background,
-platform-by-platform difficulty assessment, and decisions made so far.
+Personal tool to pull your streaming watchlists into a local SQLite database,
+so you can see them outside each app. Netflix is working end-to-end; Disney+
+is in progress. See `nowplay-project-instructions.md` for the full
+background, platform-by-platform difficulty assessment, and decisions made
+so far.
 
 ## Before you use this
 
-Netflix's Terms of Use prohibit automated/scripted access to the service
-(section 4.3: no "robot, spider, scraper or other automated means"). This is
-a contract risk, not a legal one — the realistic downside is account
-suspension if Netflix detects and acts on it, not legal action. That risk
+Netflix's and Disney+'s Terms of Use both prohibit automated/scripted access
+to the service. This is a contract risk, not a legal one — the realistic
+downside is account suspension if detected, not legal action. That risk
 doesn't go away with any of the mitigations below; it's just reduced. Use
 your own judgment about whether that trade-off is acceptable for your
 account.
@@ -50,19 +50,31 @@ ships venv support as a separate package: `sudo apt install python3.12-venv`
 
 ```bash
 python scripts/login.py netflix
+python scripts/login.py disney_plus
 ```
 
-A Firefox window opens to the Netflix login page. Log in by hand (this
-handles any MFA/captcha Netflix throws at you), then press Enter in the
-terminal once you're in. This saves your session to
-`data/netflix_state.json`. You only need to redo this if the saved session
-stops working (e.g. you get logged out).
+A Firefox window opens to the platform's login page. Log in by hand (this
+handles any MFA/captcha thrown at you), then press Enter in the terminal
+once you're in. This saves your session to `data/<platform>_state.json`. You
+only need to redo this if the saved session stops working (e.g. you get
+logged out).
 
 ## Scraping
 
 ```bash
 python -m nowplay.cli scrape netflix
+python -m nowplay.cli scrape disney_plus
 ```
+
+**Disney+ is currently in discovery mode**, not extraction mode — there was
+no way to verify Disney+'s watchlist URL or DOM selectors without an
+authenticated session, unlike Netflix where documented patterns existed. The
+first run navigates to the Watchlist page and dumps the page HTML +
+screenshot to `data/disney_plus_debug/` instead of guessing at selectors.
+Look at `data/disney_plus_debug/page.html` (search for your watchlist titles
+to see how they're marked up) and `page.png`, then fill in
+`TITLE_CARD_SELECTOR` in `src/nowplay/scrapers/disney_plus.py` accordingly —
+happy to help figure that out together once you've got real output to look at.
 
 ## Viewing results
 

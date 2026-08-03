@@ -80,6 +80,37 @@ everything he's queued up across services in one place.
 - Netflix's bulk personal-data export is **not** being used as a fallback —
   see finding above; it doesn't appear to cover watchlist data.
 
+## Disney+ attempt (started 2026-08-03)
+
+Netflix pipeline validated end-to-end against a real account — selectors worked
+first try, correct titles recovered. Extending to Disney+ next, per the
+"harder" assessment already on file above.
+
+What I could confirm before writing any code (searched, not assumed):
+- Login page: `https://www.disneyplus.com/identity/login` — confirmed from
+  disneyplus.com's own domain in search results.
+- Web UI has a "Watchlist" entry in the top nav (per Disney's own help
+  center), but **no specific watchlist URL path could be confirmed** — unlike
+  Netflix's well-documented `/browse/my-list`. Disney+'s help content is
+  itself JS-rendered, so it couldn't be fetched directly to check.
+- **No confirmed DOM selectors.** Generic scraping write-ups reference
+  `title-field`/`genre-tag` classes on Disney+'s catalog browse pages, but
+  nothing specific to the watchlist page, and nothing I'd treat as reliable
+  enough to hard-code blind.
+- **No confirmed anti-bot vendor for Disney+ specifically.** The market
+  leaders as of 2026 (Cloudflare, DataDome, Akamai, PerimeterX/HUMAN, Kasada)
+  increasingly stack TLS/JA4 fingerprinting and per-site behavioral ML on top
+  of the JS-level signals Firefox+headed already mitigates — if Disney+ runs
+  any of these, that's a real ceiling on what this approach can evade, not
+  just a theoretical one.
+
+Given the gaps above, the Disney+ scraper is being built as a **discovery
+tool first, extractor second**: it navigates by clicking the "Watchlist" nav
+link (accessible-name based, not a guessed URL) and dumps the resulting
+page's HTML + a screenshot to `data/disney_plus_debug/` rather than guessing
+selectors with false confidence. Real selectors get written once we've both
+looked at real output from Paul's actual account.
+
 ## Working style for this project
 - Conclusions-first, structured responses.
 - Honest, balanced technical assessment — flag risk and uncertainty rather than
