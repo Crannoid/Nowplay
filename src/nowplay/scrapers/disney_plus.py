@@ -1,22 +1,18 @@
 """Disney+ watchlist scraper.
 
-Unlike netflix.py, this is NOT built from confirmed selectors — I have no way
-to inspect Disney+'s real, authenticated watchlist DOM from this environment,
-and unlike Netflix, there's no well-documented `/browse/my-list`-equivalent
-URL or selector pattern to lean on. Guessing and hard-coding a selector here
-would just fail silently or scrape the wrong thing with false confidence.
+Selectors below were confirmed against a real debug dump (page.html/page.png,
+captured 2026-08-03 from Paul's actual watchlist) — not guessed. Disney+'s
+watchlist grid uses `data-testid="set-item"` anchors, each with an
+aria-label like "Tron: Ares Select for details on this title." (sometimes
+with a badge like "Disney+ Original" or "Hulu Original Series" inserted
+before "Select for details..." — see KNOWN_BADGES).
 
-So this runs in two modes:
-
-  DISCOVER (default until real selectors are confirmed): navigates to the
-  watchlist by clicking the nav link with accessible name "Watchlist" (robust
-  to URL changes, unlike hard-coding a guessed path), then dumps the full
-  page HTML and a screenshot to data/disney_plus_debug/ instead of trying to
-  extract anything. Look at those files (or send them over) so we can agree
-  on real selectors together.
-
-  EXTRACT: once TITLE_CARD_SELECTOR below is filled in from real DOM
-  inspection, this behaves like netflix.py.
+If this stops finding items, Disney+ has likely changed the DOM. Fall back to
+DISCOVER mode by setting TITLE_CARD_SELECTOR = None below — that navigates to
+the watchlist via the "Watchlist" nav link (accessible-name based, not a
+guessed URL) and dumps a fresh page HTML + screenshot to
+data/disney_plus_debug/ instead of extracting, so selectors can be
+re-confirmed against real output rather than re-guessed.
 
 Usage:
     python -m nowplay.cli scrape disney_plus
@@ -30,9 +26,20 @@ from nowplay.scrapers.base import PlatformScraper, STATE_DIR
 
 DEBUG_DIR = STATE_DIR / "disney_plus_debug"
 
-# Fill this in once we've inspected data/disney_plus_debug/page.html together.
-# Leave as None to stay in discovery mode.
-TITLE_CARD_SELECTOR: str | None = None
+TITLE_CARD_SELECTOR: str | None = 'a[data-testid="set-item"]'
+
+SELECT_SUFFIX = " Select for details on this title."
+
+# Badge text Disney+ appends to a title's aria-label before SELECT_SUFFIX,
+# observed directly in Paul's watchlist debug dump. Not guaranteed
+# exhaustive — other content types (ESPN, National Geographic, Star Wars
+# Originals, etc.) weren't present in that watchlist and may use badges not
+# listed here, which would show up as extra trailing text on the title until
+# added.
+KNOWN_BADGES = [
+    "Hulu Original Series",
+    "Disney+ Original",
+]
 
 
 class DisneyPlusScraper(PlatformScraper):
@@ -101,18 +108,29 @@ class DisneyPlusScraper(PlatformScraper):
         seen_titles: set[str] = set()
 
         for card in cards:
-            label = card.get_attribute("aria-label") or card.inner_text()
-            if not label:
+            label = card.get_attribute("aria-label")
+            href = card.get_attribute("href") or ""
+            item_id = card.get_attribute("data-item-id")
+
+            if not label or not label.endswith(SELECT_SUFFIX):
                 continue
-            title = label.strip()
-            if title in seen_titles:
+            title = label[: -len(SELECT_SUFFIX)].strip()
+
+            for badge in KNOWN_BADGES:
+                if title.endswith(badge):
+                    title = title[: -len(badge)].strip()
+                    break
+
+            if not title or title in seen_titles:
                 continue
             seen_titles.add(title)
+
             items.append(
                 WatchlistItem(
                     platform=self.platform,
                     title=title,
-                    raw={"selector": TITLE_CARD_SELECTOR},
+                    external_id=item_id,
+                    raw={"href": href, "aria_label": label},
                 )
             )
 
