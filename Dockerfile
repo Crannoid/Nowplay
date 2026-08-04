@@ -40,5 +40,10 @@ RUN chmod +x /entrypoint.sh
 # data/ (auth session state + nowplay.db) is deliberately NOT copied into
 # the image — see .dockerignore. It must be bind-mounted at run time:
 #   docker run --rm -v /path/on/tower/data:/app/data nowplay-scraper:proof
+#
+# Default command scrapes every registered platform in turn, with per-
+# platform error isolation (one failing doesn't stop the rest) — see
+# cmd_scrape_all in cli.py. Override for a single platform when debugging:
+#   docker run ... nowplay-scraper:proof python -m nowplay.cli scrape netflix
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["python", "-m", "nowplay.cli", "scrape", "netflix"]
+CMD ["python", "-m", "nowplay.cli", "scrape", "all"]

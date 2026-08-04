@@ -380,6 +380,55 @@ Tower testing: selectors confirmed locally, not yet run in the Tower
 container. That's the natural next step, same process already proven for
 Netflix and Disney+.
 
+## Container defaults to scraping all platforms (2026-08-04)
+
+Per the failure-isolation principle already decided in Automation &
+Scheduling ("Netflix should keep running even if Disney+ selectors drift"),
+extended down to the container level: `python -m nowplay.cli scrape all` is
+now a real command (added to `cli.py`, not just a design note) that runs
+every registered scraper in turn, and it's the Dockerfile's default `CMD` —
+was `scrape netflix` only.
+
+- One platform's scraper throwing (stale selectors, browser launch failure,
+  network error, anything) is caught, printed with a full traceback, and
+  recorded in a summary — it does **not** stop the remaining platforms.
+- A per-run summary (status, item/removed counts, or the error) is printed
+  and also written to `data/last_scrape_summary.json`, next to `nowplay.db`
+  — addresses the logging gap Automation & Scheduling already flagged
+  ("currently only visible in an interactive terminal — unusable for
+  diagnosing a failure after the fact").
+- Exit code is non-zero only if at least one platform hard-errored — a
+  genuinely empty watchlist (0 items, no exception) doesn't count as a
+  failure. This is there for future cron/healthchecks.io wiring (Phase 4,
+  not built yet) to be able to tell a failed run from a clean one without
+  parsing log text.
+- Single-platform runs still work unchanged, both via
+  `python -m nowplay.cli scrape <platform>` and by overriding the
+  container's command with `docker run ... nowplay-scraper:proof python -m
+  nowplay.cli scrape <platform>` — useful when debugging one scraper instead
+  of running the full set.
+
+**Verification done this session:** syntax-checked, then exercised with
+mocked scrapers (one succeeding, one raising, one returning 0 items) to
+confirm the error-isolation actually works, not just reads correctly. It
+did — worth noting the successful-looking scraper in that test also hit an
+unrelated real error (a `sqlite3.OperationalError: disk I/O error` specific
+to this sandbox's mounted filesystem) partway through, and the run still
+correctly recorded it and continued to the remaining platforms rather than
+stopping — a good, if accidental, stress test of the exact failure mode this
+feature exists for.
+
+**Housekeeping note:** that verification run wrote real files into this
+project's actual `data/` folder — `data/nowplay.db`,
+`data/nowplay.db-journal`, and `data/test_scrape_summary.json` — containing
+fake test platforms ("fake_ok", "fake_error", "fake_zero"), not real
+watchlist data. Attempted to delete them afterward and couldn't — this
+sandbox's mount to the project folder doesn't permit file deletion
+(`PermissionError: Operation not permitted`, both via `rm` and Python's
+`os.remove`). **These three files need deleting by hand** before trusting
+anything in `data/nowplay.db` as real; `data/` is gitignored, so nothing
+here leaked into version control, but it's sitting on disk locally.
+
 ## UI priority correction (2026-08-04)
 
 Supersedes the "Front end: none yet... revisit once the scraper is proven reliable"

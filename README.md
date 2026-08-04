@@ -152,6 +152,19 @@ it locally.
    ```bash
    docker run --rm -v /mnt/user/appdata/nowplay/data:/app/data nowplay-scraper:proof
    ```
+   By default this scrapes **every registered platform in turn** — Netflix,
+   Disney+, BBC iPlayer, HBO Max, Prime Video — not just Netflix. One
+   platform erroring (stale selectors throwing, a browser launch failure, a
+   network blip) is caught and recorded, not fatal to the rest — see
+   `cmd_scrape_all` in `src/nowplay/cli.py`. A summary prints at the end and
+   is also written to `data/last_scrape_summary.json`, so the last run's
+   outcome is inspectable even after the container's own logs are gone.
+   To run just one platform (e.g. while debugging a single scraper),
+   override the command:
+   ```bash
+   docker run --rm -v /mnt/user/appdata/nowplay/data:/app/data \
+     nowplay-scraper:proof python -m nowplay.cli scrape netflix
+   ```
 5. Compare the item count/titles against a known-good local run before
    trusting the container path. Only move to scheduling (cron/systemd timer
    inside or around the container) once this checks out.
