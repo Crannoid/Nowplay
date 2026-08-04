@@ -226,6 +226,19 @@ touching a DB file directly).
   script but doesn't have SSH access to Tower or a matching x86 Docker
   environment to fully validate against a live Netflix session).
 
+**Update (2026-08-04, same day) — first run on Tower hung indefinitely.**
+Diagnosed live via `docker exec` into the running container: `ps aux` showed
+Xvfb running fine, but no `python`/`firefox` process ever started — `xvfb-run`
+itself never handed off. Root cause: `xvfb-run`'s startup logic polls with
+`xdpyinfo` to detect when Xvfb is ready before launching the wrapped command;
+`xdpyinfo` isn't included in the `mcr.microsoft.com/playwright/python` base
+image (it ships in the separate `x11-utils` package, not with Xvfb), so the
+readiness check fails every iteration and loops forever rather than erroring.
+Confirmed via `curl` from inside the container that outbound network/DNS was
+fine throughout — this was purely an Xvfb/browser-launch handoff issue, not
+a networking one. Fix: added `x11-utils` to the Dockerfile's apt install.
+Not yet re-tested on Tower after the fix.
+
 ## UI priority correction (2026-08-04)
 
 Supersedes the "Front end: none yet... revisit once the scraper is proven reliable"

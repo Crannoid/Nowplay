@@ -13,6 +13,15 @@
 # pyproject.toml/requirements.txt together — do not let them drift apart.
 FROM mcr.microsoft.com/playwright/python:v1.62.0-jammy
 
+# xvfb-run's own startup handoff polls with `xdpyinfo` to detect when Xvfb is
+# ready before launching the wrapped command — without it, that check fails
+# every iteration and xvfb-run hangs forever (confirmed 2026-08-04: Xvfb
+# started fine, but xvfb-run never handed off to python because xdpyinfo was
+# missing from this base image). xdpyinfo ships in x11-utils, not with Xvfb.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends x11-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY pyproject.toml requirements.txt ./
