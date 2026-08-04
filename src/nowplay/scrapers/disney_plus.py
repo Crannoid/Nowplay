@@ -79,6 +79,28 @@ class DisneyPlusScraper(PlatformScraper):
                 return []
 
             items = self.extract(page)
+
+            if not items:
+                # Confirmed selector, but 0 items — same ambiguity we hit with
+                # Netflix on Tower (2026-08-04): could be stale selectors, a
+                # stale/incomplete session, or a genuinely empty watchlist.
+                # Netflix's specific cause there was a session authenticated
+                # at the account level but not scoped to a profile, which
+                # redirected away from the watchlist page — not confirmed
+                # whether Disney+ has the same profile-selection gate, but
+                # worth checking page.url below for the same pattern before
+                # assuming it's stale selectors.
+                print(f"disney_plus: page.url after navigation was {page.url}")
+                self._dump_debug_artifacts(page)
+                print(
+                    f"disney_plus: found 0 items with a confirmed selector — "
+                    f"dumped page HTML and a screenshot to {DEBUG_DIR}/. Check "
+                    f"page.url above first (a login or profile-select page "
+                    f"instead of the watchlist means a stale/incomplete "
+                    f"session, not stale selectors), then inspect "
+                    f"page.png/page.html if it's genuinely on the watchlist page."
+                )
+
             browser.close()
         return items
 

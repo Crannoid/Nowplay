@@ -51,6 +51,9 @@ ships venv support as a separate package: `sudo apt install python3.12-venv`
 ```bash
 python scripts/login.py netflix
 python scripts/login.py disney_plus
+python scripts/login.py bbc_iplayer
+python scripts/login.py hbo_max
+python scripts/login.py prime_video
 ```
 
 A Firefox window opens to the platform's login page. Log in by hand (this
@@ -64,17 +67,30 @@ logged out).
 ```bash
 python -m nowplay.cli scrape netflix
 python -m nowplay.cli scrape disney_plus
+python -m nowplay.cli scrape bbc_iplayer
+python -m nowplay.cli scrape hbo_max
+python -m nowplay.cli scrape prime_video
 ```
 
-**Disney+ is currently in discovery mode**, not extraction mode — there was
-no way to verify Disney+'s watchlist URL or DOM selectors without an
-authenticated session, unlike Netflix where documented patterns existed. The
-first run navigates to the Watchlist page and dumps the page HTML +
-screenshot to `data/disney_plus_debug/` instead of guessing at selectors.
-Look at `data/disney_plus_debug/page.html` (search for your watchlist titles
-to see how they're marked up) and `page.png`, then fill in
-`TITLE_CARD_SELECTOR` in `src/nowplay/scrapers/disney_plus.py` accordingly —
-happy to help figure that out together once you've got real output to look at.
+**Disney+ selectors are confirmed** (extraction mode). **BBC iPlayer, HBO
+Max, and Prime Video are all in discovery mode**, not extraction mode —
+added 2026-08-04 with no discovery pass done yet, so there was no way to
+verify their watchlist DOM without an authenticated session. Each first run
+navigates to the watchlist/my-list page and dumps the page HTML + screenshot
+to `data/<platform>_debug/` instead of guessing at selectors. Look at
+`data/<platform>_debug/page.html` (search for your watchlist titles to see
+how they're marked up) and `page.png`, then fill in `TITLE_CARD_SELECTOR` in
+`src/nowplay/scrapers/<platform>.py` accordingly.
+
+A couple of things worth checking in that dump before assuming it's a
+selector problem: check `page.url` in the console output first — a
+login/sign-in page instead of the actual watchlist means the saved session
+isn't valid (or, per the Netflix finding below, isn't scoped to the right
+profile), not that the selectors need fixing. And the sign-in URLs in
+`scripts/login.py` for BBC iPlayer and Prime Video weren't independently
+confirmed against each platform's actual login flow (BBC's especially —
+search results for it were unreliable) — if login.py doesn't land somewhere
+that looks like a real sign-in page, that URL may need correcting first.
 
 ## Viewing results
 

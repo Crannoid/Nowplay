@@ -268,7 +268,76 @@ this specific case ("Who's watching" in page content) and prints a targeted
 message rather than lumping it in with generic stale-selector guidance — this
 could recur on a schedule if profile-level auth expires on a different
 cadence than account-level auth, so worth being able to diagnose at a glance
-next time. Not yet re-tested with a profile-scoped session.
+next time.
+
+**Update (2026-08-04, same day) — proof of concept achieved.** Re-ran on
+Tower with a profile-scoped session: `netflix: upserted 20 items, marked 0 as
+removed.` Full pipeline (Xvfb, headed Firefox, Netflix auth incl. profile
+selection, DOM extraction, local SQLite upsert) confirmed working in a
+container on Tower. Item count/titles not yet cross-checked against a
+known-good reference (Paul's actual My List page or a prior local run) —
+worth doing before treating this as fully validated, per the same "don't
+assume it's right just because it ran" logic that caught the earlier two
+issues. Reminder: this container run still writes to a **local**
+`data/nowplay.db` on Tower — the write-API to the Pi that the real
+integration depends on (see "Hosting & architecture" above) still doesn't
+exist. Next phase is a choice between building that write API/website (the
+stated near-term priority per "UI priority correction" above) or scheduling
+this container to run unattended (cron/systemd timer) first — not decided
+yet, worth a deliberate call rather than defaulting to whichever's easier.
+
+**Update (2026-08-04, same day) — Disney+ proven too.** Validated locally on
+Paul's dev PC first (confirmed selectors from 2026-08-03 still work), then
+in the same Tower container used for Netflix, via a CLI command override
+(`python -m nowplay.cli scrape disney_plus`) — no Dockerfile/entrypoint
+changes needed, since the image was already scraper-agnostic. Also added the
+same 0-items debug-dump protection to `disney_plus.py` that Netflix's Tower
+testing motivated, in case of a similar stale-session/profile-selection gap
+in future. Both in-scope-so-far platforms (Netflix, Disney+) are now
+confirmed running end-to-end in a container on Tower. Prime Video not
+started. Same open decision as above: write API/website vs. scheduling is
+the next call to make.
+
+## BBC iPlayer / HBO Max / Prime Video scaffolding (2026-08-04)
+
+Added scraper modules for all three remaining in-scope platforms, given
+Paul's own watchlist URLs directly (not searched/guessed):
+- BBC iPlayer: `https://www.bbc.co.uk/iplayer/watchlist`
+- HBO Max: `https://play.hbomax.com/my-stuff`
+- Prime Video: given as
+  `https://www.amazon.co.uk/gp/video/mystuff?ref_=atv_hm_hom_c_9zZ8D2_mys`,
+  Paul flagged the trailing `ref_=` as possibly unstable — that's an Amazon
+  tracking/attribution param, not required for the page to load, so it was
+  dropped in favour of the bare `gp/video/mystuff` path.
+
+**None of the three have had a discovery pass** — no confirmed DOM
+selectors for any of them, unlike Disney+ where a real session was already
+inspected. Built all three in discovery mode only (same pattern Disney+
+used before its selectors were confirmed): `TITLE_CARD_SELECTOR = None`,
+first run dumps `page.url` + page HTML + a screenshot to
+`data/<platform>_debug/` rather than guessing at markup. Wired into
+`cli.py`'s `SCRAPERS` dict and `scripts/login.py`'s `LOGIN_URLS`.
+
+**Login URLs — confidence varies, flagged honestly rather than asserted as
+fact:**
+- HBO Max (`https://play.hbomax.com/login`) — reasonably confident, same
+  domain as Paul's own watchlist URL, corroborated by a web search.
+- Prime Video (`https://www.amazon.co.uk/ap/signin`) — reasonably confident;
+  `ap/signin` is Amazon's long-standing, domain-wide sign-in gateway, not
+  Prime-Video-specific.
+- BBC iPlayer — **not confirmed.** Web search results for a BBC sign-in URL
+  were unreliable/spam-adjacent (some looked phishing-like, not used as a
+  source). Rather than guess, `scripts/login.py`'s `bbc_iplayer` entry just
+  opens the watchlist URL itself, which should surface BBC's own sign-in
+  prompt for an unauthenticated session — Paul logs in from there by hand.
+  Worth fixing to a real dedicated login URL once one's confirmed from
+  actual use.
+
+**Next step for each (not done this session):** Paul needs to run
+`scripts/login.py <platform>` somewhere with a screen, then
+`python -m nowplay.cli scrape <platform>` to trigger the discovery dump, then
+share (or inspect) the resulting `page.html`/`page.png` to identify and set
+real `TITLE_CARD_SELECTOR` values — same process already proven for Disney+.
 
 ## UI priority correction (2026-08-04)
 

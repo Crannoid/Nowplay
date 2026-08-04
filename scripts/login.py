@@ -21,7 +21,15 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 LOGIN_URLS = {
     "netflix": "https://www.netflix.com/login",
     "disney_plus": "https://www.disneyplus.com/identity/login",
-    # prime_video intentionally not added yet — not in scope yet.
+    # BBC iPlayer's dedicated sign-in URL wasn't confirmed with any
+    # confidence (search results were unreliable/spam-adjacent) — this opens
+    # the watchlist page itself instead, which will surface BBC's own
+    # sign-in prompt if not authenticated. Log in from there by hand.
+    "bbc_iplayer": "https://www.bbc.co.uk/iplayer/watchlist",
+    "hbo_max": "https://play.hbomax.com/login",
+    # Amazon's ap/signin is the standard sign-in gateway used across all
+    # amazon.co.uk properties (not Prime-Video-specific), a long-stable URL.
+    "prime_video": "https://www.amazon.co.uk/ap/signin",
 }
 
 

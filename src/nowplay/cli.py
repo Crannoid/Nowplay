@@ -12,12 +12,18 @@ from __future__ import annotations
 import sys
 
 from nowplay import db
+from nowplay.scrapers.bbc_iplayer import BBCiPlayerScraper
 from nowplay.scrapers.disney_plus import DisneyPlusScraper
+from nowplay.scrapers.hbo_max import HBOMaxScraper
 from nowplay.scrapers.netflix import NetflixScraper
+from nowplay.scrapers.prime_video import PrimeVideoScraper
 
 SCRAPERS = {
     "netflix": NetflixScraper,
     "disney_plus": DisneyPlusScraper,
+    "bbc_iplayer": BBCiPlayerScraper,
+    "hbo_max": HBOMaxScraper,
+    "prime_video": PrimeVideoScraper,
 }
 
 
