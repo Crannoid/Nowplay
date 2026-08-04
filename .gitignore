@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+syncffs*
 
 # Local data: sqlite db + saved login sessions (contain auth cookies — never commit)
 data/*.db
