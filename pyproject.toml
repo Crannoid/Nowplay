@@ -8,7 +8,12 @@ version = "0.1.0"
 description = "Personal streaming watchlist aggregator (Netflix first)."
 requires-python = ">=3.10"
 dependencies = [
-    "playwright>=1.45",
+    # Pinned exactly (not >=) so the version installed in the Docker image
+    # matches the Playwright browser binaries baked into the base image —
+    # Playwright requires an exact match between the pip package and the
+    # installed browsers, or launches fail with "Executable doesn't exist".
+    # See Dockerfile / nowplay-project-instructions.md for the paired image tag.
+    "playwright==1.62.0",
 ]
 
 [tool.setuptools.packages.find]

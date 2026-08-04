@@ -82,9 +82,12 @@ happy to help figure that out together once you've got real output to look at.
 python -m nowplay.cli list
 ```
 
-No front end yet by design — query `data/nowplay.db` directly with any
-SQLite browser, or use the `list` command above, until the pipeline's proven
-reliable enough to be worth building a UI on top of.
+For now, query `data/nowplay.db` directly with any SQLite browser, or use the
+`list` command above. This is a stopgap, not the destination: the actual goal
+is a website (local network only, browsable from your phone) showing
+everything queued up across services — see `nowplay-project-instructions.md`
+("UI priority correction") and the Hosting & Architecture / Project Plan pages
+in Notion. Not built yet, but no longer deferred indefinitely.
 
 ## If the scraper finds 0 items
 
@@ -104,3 +107,34 @@ xvfb-run -a python -m nowplay.cli scrape netflix
 
 Then schedule via cron / a systemd timer, a few times a week rather than
 continuously — see project instructions doc for the reasoning.
+
+## Running in Docker on Tower (Unraid) — proof of concept
+
+Per the hosting decision in `nowplay-project-instructions.md`, the scraper's
+long-term home is a container on Tower (Unraid), not the Pi and not this
+machine. This is currently a **proof that it runs there**, not the final
+integration — the website's write API that the scraper is meant to POST
+results to hasn't been built yet, so for now a container run on Tower still
+writes to a local `data/nowplay.db` on Tower's own disk, the same as running
+it locally.
+
+1. On a machine with a real screen, run the first-time login step as above
+   so you have a current `data/netflix_state.json`.
+2. On your Ubuntu desktop (with Docker installed and SSH access to Tower):
+   ```bash
+   TOWER_HOST=tower.cr TOWER_USER=root ./scripts/build_and_deploy_tower.sh
+   ```
+   This builds the image locally, then ships it to Tower via `docker save` /
+   `scp` / `docker load` — no registry involved, per the current decision.
+3. Copy `data/netflix_state.json` onto Tower (the script prints the `scp`
+   command) so the container has a session to use.
+4. On Tower, run it once manually and check the output:
+   ```bash
+   docker run --rm -v /mnt/user/appdata/nowplay/data:/app/data nowplay-scraper:proof
+   ```
+5. Compare the item count/titles against a known-good local run before
+   trusting the container path. Only move to scheduling (cron/systemd timer
+   inside or around the container) once this checks out.
+
+See the `Dockerfile` and `docker/entrypoint.sh` for how headed Firefox gets a
+virtual display (Xvfb) with no monitor attached to Tower.

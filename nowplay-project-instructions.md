@@ -1,9 +1,41 @@
 # Project: Streaming Watchlist Aggregator
 
+## Second brain — Notion
+
+Status, decisions, and platform research for this project are tracked in Notion
+(Technical Notes → Nowplay), not only here — treat it as the second brain for
+Nowplay, not this file alone.
+
+- **Read first.** Before starting work in a session, check Notion for current
+  status and anything logged there since this file was last touched — start
+  with Project Plan (order of operations, current phase, next steps). This
+  file can and does drift out of date between sessions; Notion is where
+  changes should be checked for, not assumed absent.
+- **Write back.** At the end of a session, log anything worth persisting — new
+  decisions, confirmed platform findings, status changes — to the relevant
+  Notion page, not just here.
+
+Structure:
+- [Nowplay](https://app.notion.com/p/3b292a0f6496819e97c5dffd25389ef3) — top-level page
+- [Project Plan](https://app.notion.com/p/3b292a0f6496814b8a30fc818636a3dd) — order of operations, current phase, next steps
+- [Requirements & Platform Notes](https://app.notion.com/p/3b292a0f649681368b19fc5ad62dd884) — purpose, platform-by-platform assessment, key decisions
+- [Data Model](https://app.notion.com/p/3b292a0f6496813e8067c8c90b066515) — SQLite schema and design decisions
+- [Automation & Scheduling](https://app.notion.com/p/3b292a0f64968162b610fd0a18d2c420) — design for moving from manual testing scripts to a scheduled, automated process
+
+This file remains the in-repo working log; Notion is the canonical, browsable
+record. Keep both in sync — don't let one drift ahead of the other without
+updating the other.
+
 ## Goal
 Build a personal tool that consolidates "watchlist" (My List / Watchlist) data from
 Netflix, Disney+, and Amazon Prime Video into one central app, so Paul can see
 everything he's queued up across services in one place.
+
+**The end product is a website, not a database.** (Clarified 2026-08-04 — see "UI
+priority correction" below.) The scraping/SQLite pipeline is the means, not the
+point: the goal is a website on the local network — no remote access needed yet —
+browsable from Paul's phone, showing all shows and films across every streaming
+service's watchlist in scope.
 
 ## Context / constraints established
 - None of the three platforms offer a public, official API for watchlist data.
@@ -120,6 +152,97 @@ page HTML + screenshot to `data/disney_plus_debug/` for inspection first.
   unreliable in practice — likely SPA hydration/timing flakiness — so
   direct navigation replaced it. Note the `en-gb` locale segment is
   specific to Paul's account region.
+
+## Hosting & architecture (decided 2026-08-04)
+
+Home lab hosts in play: `containerHost` (Raspberry Pi, 192.168.68.101, Docker host) and
+`Unraid` (custom PC under stairs, 192.168.68.113 / `tower.cr`, x86). Both run Docker
+containers; a Windows 11 PC (daily driver) was considered and ruled out as the scraper's
+home — not always-on, and the goal is to keep it lightly installed.
+
+- **DB + website → containerHost (Pi), in containers.** SQLite stays local to the
+  website process. The website *owns* the DB and exposes a small write API for the
+  scraper to POST scraped results to — it does not accept direct file/network-share
+  access to `nowplay.db`. This is a hard requirement, not a preference: SQLite's own
+  docs warn that locking is unreliable over network filesystems (NFS/SMB) and can
+  corrupt the DB, so the scraper must never write to the .db file directly if it's
+  running on a different host than the DB (sqlite.org/useovernet.html,
+  sqlite.org/lockingv3.html).
+- **Scraper → Unraid, in a container**, not the Pi and not the Windows PC.
+  - Playwright is officially supported on arm64 Debian 12/13 / Ubuntu 22.04+, so the
+    Pi wasn't ruled out for lack of official support — Unraid was preferred because
+    it's x86 (Playwright's best-tested lane), has more headroom for a real headed
+    Firefox than the Pi, and keeps the Pi's footprint small. An unconfirmed,
+    flagged-not-fact concern: an ARM-built Firefox might produce an unusual
+    GPU/WebGL fingerprint versus a typical desktop session — no evidence found
+    either way for Netflix/Disney+ specifically.
+  - Unraid's Community Applications store is not a blocker: containers can be added
+    directly via the Docker tab by specifying an image, no CA submission required.
+    If Compose files are wanted, the existing "Docker Compose Manager" CA plugin can
+    be installed once — that's installing a tool, not publishing an app.
+- **Auth (`login.py`) stays a local, manual step** — run it wherever there's a real
+  screen (e.g. the Windows PC), in a native venv as the README already documents, not
+  in a container. Copy the resulting `data/<platform>_state.json` onto Unraid for the
+  scheduled scraper to use. Neither Unraid nor the Pi has a monitor attached, so this
+  can't move into the container path.
+
+Not yet built: the website's write API. Currently there's no front end at all (see
+README) — this needs designing before the scraper can be pointed at Unraid for real.
+
+## Scraper-on-Tower proof of concept (started 2026-08-04)
+
+Scoped narrowly: prove headed Firefox + Xvfb work correctly inside a Docker
+container on Tower's x86 hardware, decoupled from the not-yet-built website
+write API. This is deliberately *not* the final integration — see "Hosting &
+architecture" above for what still needs designing before the scraper is
+pointed at Tower for real (the write API, and Tower POSTing to it instead of
+touching a DB file directly).
+
+- **Playwright pinned to `1.62.0`** (was `>=1.45`) in `pyproject.toml` /
+  `requirements.txt`. Reason: the Docker base image ships exact-matched
+  browser binaries per Playwright release, and a version mismatch between
+  the pip package and the image fails browser launch outright. This means
+  local dev environments must also reinstall to `1.62.0` — worth knowing if
+  an existing `.venv` was set up before this change.
+- **Base image**: `mcr.microsoft.com/playwright/python:v1.62.0-jammy` —
+  ships Firefox and Xvfb preinstalled, avoiding a separate `playwright
+  install --with-deps firefox` + manual Xvfb apt install. Not independently
+  confirmed that this exact tag exists (network access wasn't available to
+  check directly) — first `docker build` will confirm; if it 404s, check
+  https://mcr.microsoft.com/en-us/artifact/mar/playwright/python/tags for
+  the current tag and update it alongside the pip pin above.
+- **Build/deploy workflow**: build on the Ubuntu desktop, `docker save` →
+  `scp` → `docker load` on Tower — no registry, per Paul's preference.
+  Scripted in `scripts/build_and_deploy_tower.sh`.
+- **DB scoping for this phase**: the container writes to a local
+  `data/nowplay.db` on Tower's own disk (bind-mounted, not a network
+  share) — not the Pi's DB. This doesn't violate the "no direct writes from
+  a different host" requirement above, since it's local to Tower, not
+  accessed over NFS/SMB from elsewhere. It's a temporary stand-in until the
+  write API exists, at which point this should be replaced with the
+  container POSTing to the Pi instead of writing a local DB file.
+- **Not yet done**: an actual build/run on Tower itself (needs Paul's
+  hands — this session drafted the Dockerfile, entrypoint, and deploy
+  script but doesn't have SSH access to Tower or a matching x86 Docker
+  environment to fully validate against a live Netflix session).
+
+## UI priority correction (2026-08-04)
+
+Supersedes the "Front end: none yet... revisit once the scraper is proven reliable"
+line under Decisions (2026-08-03) above — that framing was wrong. Paul's own words:
+**"the app is worthless without it."** The UI is not a nice-to-have bolted on after
+the pipeline is proven; it is the actual deliverable. The scraper and DB exist to
+feed it.
+
+**Concrete target:** a website, local network only (no remote access needed yet),
+browsable from Paul's phone, showing all shows and films currently on the watchlist
+across every streaming service in scope (Netflix, Disney+, and whichever of Prime
+Video / BBC iPlayer / HBO Max get built out).
+
+**Practical implication:** building the website (DB owner + write API for the
+scraper + read UI for browsing) is a near-term priority, not something deferred
+until after automation is built — see Project Plan in Notion for the revised phase
+ordering, and Hosting & Architecture for where it runs (containerHost/Pi).
 
 ## Working style for this project
 - Conclusions-first, structured responses.

@@ -1,0 +1,11 @@
+# Auth session state and the SQLite DB must never be baked into the image
+# layers — bind-mount data/ at `docker run` time instead.
+data/
+
+.venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+scripts/__pycache__/
+src/nowplay.egg-info/
