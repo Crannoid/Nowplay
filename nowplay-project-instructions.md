@@ -237,7 +237,38 @@ readiness check fails every iteration and loops forever rather than erroring.
 Confirmed via `curl` from inside the container that outbound network/DNS was
 fine throughout — this was purely an Xvfb/browser-launch handoff issue, not
 a networking one. Fix: added `x11-utils` to the Dockerfile's apt install.
-Not yet re-tested on Tower after the fix.
+
+**Update (2026-08-04, same day) — `xdpyinfo` fix did not resolve it.**
+Rebuilt with `x11-utils` installed, re-ran on Tower: identical hang,
+identical process tree (Xvfb running, no python/firefox). So the missing
+binary wasn't the (full) explanation — something else in `xvfb-run`'s
+internal readiness-check/handoff is stuck, not root-caused further (didn't
+trace into an X11 auth-cookie handshake theory with hard evidence before
+deciding to stop debugging a third-party script blind).
+
+**Fix**: replaced `xvfb-run` entirely in `docker/entrypoint.sh`. It now
+starts `Xvfb :99 ... -nolisten tcp` itself, polls for the `/tmp/.X11-unix/X99`
+socket file directly (no X11 auth-cookie handshake involved, unlike
+`xvfb-run`'s check), then execs the wrapped command once the socket exists.
+
+**Update (2026-08-04, same day) — Xvfb fix worked; found 0 items, cause
+confirmed via screenshot.** The full pipeline ran on Tower (Xvfb, headed
+Firefox, Netflix navigation) without hanging or erroring — real progress.
+0 items, though. Added a debug-dump-on-0-items to `netflix.py` (mirrors the
+existing `disney_plus.py` discovery-mode pattern) printing `page.url` and
+saving `page.html`/`page.png` to `data/netflix_debug/`. The screenshot showed
+Netflix's "Who's watching?" profile-select screen, not the login page and not
+my-list. **Confirmed: Netflix separates account-level auth from profile-level
+auth** — a session captured by `scripts/login.py` right after login but
+before clicking into a specific profile is valid (not logged out) but not
+enough to reach `/browse/my-list`, which redirects to profile-select instead.
+Fix (no code, process only): redo `scripts/login.py netflix`, click the
+profile before pressing Enter to save state. `netflix.py` now also detects
+this specific case ("Who's watching" in page content) and prints a targeted
+message rather than lumping it in with generic stale-selector guidance — this
+could recur on a schedule if profile-level auth expires on a different
+cadence than account-level auth, so worth being able to diagnose at a glance
+next time. Not yet re-tested with a profile-scoped session.
 
 ## UI priority correction (2026-08-04)
 

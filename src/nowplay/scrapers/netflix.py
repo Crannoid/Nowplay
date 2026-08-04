@@ -15,7 +15,9 @@ drift. On first run:
 from __future__ import annotations
 
 from nowplay.db import WatchlistItem
-from nowplay.scrapers.base import PlatformScraper
+from nowplay.scrapers.base import PlatformScraper, STATE_DIR
+
+DEBUG_DIR = STATE_DIR / "netflix_debug"
 
 
 class NetflixScraper(PlatformScraper):
@@ -27,6 +29,54 @@ class NetflixScraper(PlatformScraper):
 
     def watchlist_url(self) -> str:
         return "https://www.netflix.com/browse/my-list"
+
+    def run(self) -> list[WatchlistItem]:
+        self.require_saved_session()
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.firefox.launch(headless=False)
+            context = browser.new_context(storage_state=str(self.state_path))
+            page = context.new_page()
+            page.goto(self.watchlist_url(), wait_until="networkidle")
+
+            items = self.extract(page)
+
+            if not items:
+                # 0 items is ambiguous on its own — could be stale selectors
+                # (right page, DOM changed), a stale/expired session (silently
+                # redirected to login instead of my-list), a profile not being
+                # selected (account-level auth is separate from profile-level
+                # auth on Netflix — confirmed 2026-08-04: a session saved right
+                # after login but before clicking a profile redirects
+                # /browse/my-list to the "Who's watching?" screen instead),
+                # or a genuinely empty watchlist. Dump enough to tell those
+                # apart without needing a monitor on the box this runs on.
+                print(f"netflix: page.url after navigation was {page.url}")
+                if "Who's watching" in page.content():
+                    print(
+                        "netflix: landed on the profile-select screen, not "
+                        "my-list. The saved session is authenticated at the "
+                        "account level but no profile is selected — redo "
+                        "`scripts/login.py netflix` and click your profile "
+                        "before pressing Enter to save the session, then "
+                        "recopy data/netflix_state.json to wherever this runs."
+                    )
+                self._dump_debug_artifacts(page)
+                print(
+                    f"netflix: dumped page HTML and a screenshot to {DEBUG_DIR}/ "
+                    f"before closing the browser — check page.url above first "
+                    f"(login page vs. my-list means a stale session, not stale "
+                    f"selectors), then inspect page.png/page.html if it's the latter."
+                )
+
+            browser.close()
+        return items
+
+    def _dump_debug_artifacts(self, page) -> None:
+        DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        (DEBUG_DIR / "page.html").write_text(page.content())
+        page.screenshot(path=str(DEBUG_DIR / "page.png"), full_page=True)
 
     def extract(self, page) -> list[WatchlistItem]:
         # Netflix's grid lazy-loads as you scroll; my-list is usually small
