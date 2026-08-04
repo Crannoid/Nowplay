@@ -72,25 +72,29 @@ python -m nowplay.cli scrape hbo_max
 python -m nowplay.cli scrape prime_video
 ```
 
-**Disney+ selectors are confirmed** (extraction mode). **BBC iPlayer, HBO
-Max, and Prime Video are all in discovery mode**, not extraction mode —
-added 2026-08-04 with no discovery pass done yet, so there was no way to
-verify their watchlist DOM without an authenticated session. Each first run
-navigates to the watchlist/my-list page and dumps the page HTML + screenshot
-to `data/<platform>_debug/` instead of guessing at selectors. Look at
-`data/<platform>_debug/page.html` (search for your watchlist titles to see
-how they're marked up) and `page.png`, then fill in `TITLE_CARD_SELECTOR` in
-`src/nowplay/scrapers/<platform>.py` accordingly.
+**All five platforms now have confirmed selectors** (extraction mode) — BBC
+iPlayer, HBO Max, and Prime Video were added 2026-08-04 in discovery mode
+(no way to verify their DOM without an authenticated session), then
+confirmed the same day from real debug dumps once Paul logged in and ran a
+scrape for each. See the module docstring in each `src/nowplay/scrapers/
+<platform>.py` for what was actually found (Prime Video in particular needed
+section-scoped filtering, not just a flat selector, to avoid counting
+purchased/rented titles as watchlist items).
+
+If a scraper ever starts finding 0 items again, that means the DOM has
+drifted — fall back to discovery mode by setting `TITLE_CARD_SELECTOR = None`
+in that platform's file, which switches back to dumping `page.url` + page
+HTML + a screenshot to `data/<platform>_debug/` instead of guessing.
 
 A couple of things worth checking in that dump before assuming it's a
 selector problem: check `page.url` in the console output first — a
 login/sign-in page instead of the actual watchlist means the saved session
 isn't valid (or, per the Netflix finding below, isn't scoped to the right
 profile), not that the selectors need fixing. And the sign-in URLs in
-`scripts/login.py` for BBC iPlayer and Prime Video weren't independently
-confirmed against each platform's actual login flow (BBC's especially —
-search results for it were unreliable) — if login.py doesn't land somewhere
-that looks like a real sign-in page, that URL may need correcting first.
+`scripts/login.py` for BBC iPlayer weren't independently confirmed against
+the platform's actual login flow (search results for it were unreliable) —
+if login.py doesn't land somewhere that looks like a real sign-in page, that
+URL may need correcting first.
 
 ## Viewing results
 

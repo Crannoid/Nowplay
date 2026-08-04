@@ -1,22 +1,28 @@
-"""BBC iPlayer watchlist scraper — discovery mode.
+"""BBC iPlayer watchlist scraper.
 
-Added to scope 2026-08-04. No discovery pass has been done yet: no confirmed
-watchlist selectors, and BBC's automated-access/scraping terms weren't
-directly confirmed either (see Requirements & Platform Notes in Notion —
-treat as prohibited by default, same trade-off already accepted for
-Netflix/Disney+).
+Selectors confirmed 2026-08-04 from a real debug dump (page.html/page.png,
+captured from Paul's actual watchlist — 11 real items, page.url was the
+watchlist page itself, not a login redirect). BBC's automated-access/
+scraping terms weren't directly confirmed (see Requirements & Platform Notes
+in Notion — treat as prohibited by default, same trade-off already accepted
+for Netflix/Disney+).
 
-Rather than guess at BBC iPlayer's DOM, this dumps a real page HTML +
-screenshot to data/bbc_iplayer_debug/ for inspection first — the same
-discovery-before-extraction approach already used for Disney+ before its
-selectors were confirmed.
+The watchlist page (https://www.bbc.co.uk/iplayer/watchlist) renders each
+item as an `<a data-bbc-content-label="content-item">` inside a
+`.actionable-container`, with the title also available cleanly in a child
+`.content-item-root__meta--with-label` div (cleaner than parsing the anchor's
+aria-label, which glues the synopsis onto the title: "Title. Description:
+..."). The programme ID is recoverable from the href
+(`/iplayer/episodes/<id>/<slug>`).
+
+If this stops finding items, BBC has likely changed the DOM. Fall back to
+DISCOVERY mode by setting TITLE_CARD_SELECTOR = None below — that navigates
+to WATCHLIST_URL and dumps a fresh page HTML + screenshot to
+data/bbc_iplayer_debug/ instead of extracting, so selectors can be
+re-confirmed against real output rather than re-guessed.
 
 Usage:
     python -m nowplay.cli scrape bbc_iplayer
-
-Then inspect data/bbc_iplayer_debug/page.html (search for a title you have on
-your watchlist to see how it's marked up) and page.png, and fill in
-TITLE_CARD_SELECTOR below accordingly.
 """
 from __future__ import annotations
 
@@ -27,9 +33,7 @@ DEBUG_DIR = STATE_DIR / "bbc_iplayer_debug"
 
 WATCHLIST_URL = "https://www.bbc.co.uk/iplayer/watchlist"
 
-# Not yet confirmed — see module docstring. Set this once a real selector has
-# been identified from a debug dump, following the Disney+ precedent.
-TITLE_CARD_SELECTOR: str | None = None
+TITLE_CARD_SELECTOR: str | None = 'a[data-bbc-content-label="content-item"]'
 
 
 class BBCiPlayerScraper(PlatformScraper):
@@ -83,21 +87,29 @@ class BBCiPlayerScraper(PlatformScraper):
         seen_titles: set[str] = set()
 
         for card in cards:
-            label = card.get_attribute("aria-label") or card.inner_text().strip()
-            href = card.get_attribute("href") or ""
-            if not label:
-                continue
-            title = label.strip()
-            if title in seen_titles:
+            # Prefer the clean title element over aria-label, which glues the
+            # synopsis on: "Title. Description: ...".
+            title_el = card.query_selector(".content-item-root__meta--with-label")
+            title = title_el.inner_text().strip() if title_el else None
+            if not title or title in seen_titles:
                 continue
             seen_titles.add(title)
+
+            href = card.get_attribute("href") or ""
+            # href looks like /iplayer/episodes/<id>/<slug>
+            external_id = None
+            parts = href.strip("/").split("/")
+            if "episodes" in parts:
+                idx = parts.index("episodes")
+                if idx + 1 < len(parts):
+                    external_id = parts[idx + 1]
 
             items.append(
                 WatchlistItem(
                     platform=self.platform,
                     title=title,
-                    external_id=None,
-                    raw={"href": href, "label": label},
+                    external_id=external_id,
+                    raw={"href": href},
                 )
             )
 

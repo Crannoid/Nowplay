@@ -1,23 +1,31 @@
-"""HBO Max watchlist scraper — discovery mode.
+"""HBO Max watchlist scraper.
 
-Added to scope 2026-08-04. No discovery pass has been done yet: no confirmed
-"My List" selectors. HBO Max's UK/EMEA Terms of Use (checked 2026-08-04)
-explicitly prohibit scraping/data mining/extracting content and reverse
-engineering — treat that risk the same way it's already accepted for
-Netflix/Disney+ (contract risk, not legal, per Requirements & Platform
-Notes).
+Selectors confirmed 2026-08-04 from a real debug dump (page.html/page.png,
+captured from Paul's actual "My Stuff" page — 2 real items in My List,
+page.url was the my-stuff page itself, not a login redirect). HBO Max's
+UK/EMEA Terms of Use (checked 2026-08-04) explicitly prohibit scraping/data
+mining/extracting content and reverse engineering — treat that risk the same
+way it's already accepted for Netflix/Disney+ (contract risk, not legal, per
+Requirements & Platform Notes).
 
-Rather than guess at HBO Max's DOM, this dumps a real page HTML + screenshot
-to data/hbo_max_debug/ for inspection first — same discovery-before-
-extraction approach already used for Disney+ before its selectors were
-confirmed.
+The my-stuff page renders My List as one rail — a
+`<section data-sonic-id="my-stuff-page-rail-my-list">` — followed by a
+separate "Recommended for You" rail using the *same* tile component. The
+selector below is deliberately scoped to the My List rail's `data-sonic-id`,
+not a bare tile selector, so recommendations don't get pulled in as if they
+were on the watchlist. Each tile is an `<a data-tile-grid="true">`; the
+title renders as the only visible text inside it (a styled-components class
+holds it, but those hashes aren't stable enough to depend on — inner_text()
+sidesteps that entirely).
+
+If this stops finding items, HBO Max has likely changed the DOM. Fall back to
+DISCOVERY mode by setting TITLE_CARD_SELECTOR = None below — that navigates
+to WATCHLIST_URL and dumps a fresh page HTML + screenshot to
+data/hbo_max_debug/ instead of extracting, so selectors can be re-confirmed
+against real output rather than re-guessed.
 
 Usage:
     python -m nowplay.cli scrape hbo_max
-
-Then inspect data/hbo_max_debug/page.html (search for a title you have on
-your list to see how it's marked up) and page.png, and fill in
-TITLE_CARD_SELECTOR below accordingly.
 """
 from __future__ import annotations
 
@@ -28,9 +36,9 @@ DEBUG_DIR = STATE_DIR / "hbo_max_debug"
 
 WATCHLIST_URL = "https://play.hbomax.com/my-stuff"
 
-# Not yet confirmed — see module docstring. Set this once a real selector has
-# been identified from a debug dump, following the Disney+ precedent.
-TITLE_CARD_SELECTOR: str | None = None
+TITLE_CARD_SELECTOR: str | None = (
+    'section[data-sonic-id="my-stuff-page-rail-my-list"] a[data-tile-grid="true"]'
+)
 
 
 class HBOMaxScraper(PlatformScraper):
@@ -87,21 +95,23 @@ class HBOMaxScraper(PlatformScraper):
         seen_titles: set[str] = set()
 
         for card in cards:
-            label = card.get_attribute("aria-label") or card.inner_text().strip()
-            href = card.get_attribute("href") or ""
-            if not label:
-                continue
-            title = label.strip()
-            if title in seen_titles:
+            # aria-label is wrapped in bidi-isolate unicode marks and glues on
+            # grid position ("Row 1 of 1, Column 1 of 4") — inner_text() is
+            # just the title, since that's the only visible text in the tile.
+            title = card.inner_text().strip()
+            if not title or title in seen_titles:
                 continue
             seen_titles.add(title)
+
+            href = card.get_attribute("href") or ""
+            external_id = card.get_attribute("data-sonic-id")
 
             items.append(
                 WatchlistItem(
                     platform=self.platform,
                     title=title,
-                    external_id=None,
-                    raw={"href": href, "label": label},
+                    external_id=external_id,
+                    raw={"href": href},
                 )
             )
 

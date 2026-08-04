@@ -347,6 +347,39 @@ fact:**
 share (or inspect) the resulting `page.html`/`page.png` to identify and set
 real `TITLE_CARD_SELECTOR` values — same process already proven for Disney+.
 
+**Update (2026-08-04, same day) — all three confirmed from real debug
+dumps, discovery mode complete.** Paul ran `scripts/login.py` and a scrape
+for all three; all landed on the correct page (`page.url` confirmed, not a
+login redirect), and the resulting `page.html`/`page.png` dumps were
+inspected directly. Real selectors set, extraction logic written, and
+cross-checked against the actual saved HTML with BeautifulSoup applying the
+identical selectors (not just eyeballed) before calling it done:
+
+- **BBC iPlayer** — `a[data-bbc-content-label="content-item"]`, title from a
+  clean child element (not the messier aria-label), ID parsed from the href.
+  11/11 real watchlist items matched correctly.
+- **HBO Max** — `section[data-sonic-id="my-stuff-page-rail-my-list"]
+  a[data-tile-grid="true"]`, scoped to the My List rail specifically because
+  the "Recommended for You" rail below it reuses the identical tile
+  component — a flat selector would've pulled in recommendations as if they
+  were on the watchlist. 2/2 real items matched, 0 false positives from
+  Recommended.
+- **Prime Video** — the trickiest of the three: `/gp/video/mystuff` renders
+  four rails (Watchlist – Movies/TV, Purchases and rentals – Movies/TV) all
+  using the *identical* `<article data-testid="card">` component with a
+  clean `data-card-title` attribute. extract() now filters by carousel
+  heading text (must start with "Watchlist") before pulling cards, to avoid
+  counting purchased/rented titles as watchlist items. Confirmed 8 real
+  watchlist cards found, correctly excluding the 2 purchases. Noted but not
+  used: a dedicated `/gp/video/mystuff/watchlist` URL exists in the page's
+  own nav markup, which would avoid needing this section-filtering — not
+  switched to since its rendered output wasn't independently confirmed.
+
+All three platforms are now in the same state Netflix/Disney+ were before
+Tower testing: selectors confirmed locally, not yet run in the Tower
+container. That's the natural next step, same process already proven for
+Netflix and Disney+.
+
 ## UI priority correction (2026-08-04)
 
 Supersedes the "Front end: none yet... revisit once the scraper is proven reliable"
