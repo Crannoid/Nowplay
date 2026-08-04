@@ -322,9 +322,17 @@ first run dumps `page.url` + page HTML + a screenshot to
 fact:**
 - HBO Max (`https://play.hbomax.com/login`) — reasonably confident, same
   domain as Paul's own watchlist URL, corroborated by a web search.
-- Prime Video (`https://www.amazon.co.uk/ap/signin`) — reasonably confident;
-  `ap/signin` is Amazon's long-standing, domain-wide sign-in gateway, not
-  Prime-Video-specific.
+- Prime Video — **correction (2026-08-04):** the original guess,
+  `https://www.amazon.co.uk/ap/signin`, was wrong — confirmed by Paul, it
+  returns "not a functioning page." Bare `ap/signin` needs redirect context
+  (`openid.*` query params) only present when Amazon itself bounces you
+  there from another page, not when visited cold. "Long-standing, stable
+  URL" was true of the pattern in general, not of visiting it directly
+  without that context — a real gap in the earlier reasoning, not just an
+  unlucky guess. Fixed the same way as BBC iPlayer below: `login.py` now
+  opens the watchlist URL itself (`amazon.co.uk/gp/video/mystuff`) and lets
+  Amazon's own redirect produce a working, correctly-parameterized sign-in
+  URL.
 - BBC iPlayer — **not confirmed.** Web search results for a BBC sign-in URL
   were unreliable/spam-adjacent (some looked phishing-like, not used as a
   source). Rather than guess, `scripts/login.py`'s `bbc_iplayer` entry just

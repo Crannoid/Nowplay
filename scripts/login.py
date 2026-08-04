@@ -27,9 +27,14 @@ LOGIN_URLS = {
     # sign-in prompt if not authenticated. Log in from there by hand.
     "bbc_iplayer": "https://www.bbc.co.uk/iplayer/watchlist",
     "hbo_max": "https://play.hbomax.com/login",
-    # Amazon's ap/signin is the standard sign-in gateway used across all
-    # amazon.co.uk properties (not Prime-Video-specific), a long-stable URL.
-    "prime_video": "https://www.amazon.co.uk/ap/signin",
+    # Correction (2026-08-04): bare ap/signin was assumed to be a stable,
+    # directly-visitable URL — wrong. Confirmed by Paul: Amazon returns "not
+    # a functioning page" for it directly, because ap/signin expects redirect
+    # context (openid.* query params) that only get attached when you're
+    # bounced there from another Amazon page, not when visited cold. Same
+    # fallback already used for bbc_iplayer: open the actual destination page
+    # instead, and let Amazon's own redirect produce a working sign-in URL.
+    "prime_video": "https://www.amazon.co.uk/gp/video/mystuff",
 }
 
 
