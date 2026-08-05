@@ -632,6 +632,72 @@ standalone script), and the UI itself, which is what actually consumes
 `poster_url`/`overview` — see "UI priority correction" above for why that's
 the actual near-term priority.
 
+## Scraper moved to containerHost; DB access and container topology decided (2026-08-06)
+
+Supersedes the "Hosting & architecture (decided 2026-08-04)" section above, which had
+the scraper on Tower (Unraid) and the DB owned exclusively by the website process. Both
+have changed — this section is the current state; the section above is kept for history,
+not as instructions to follow.
+
+**Scraper consolidated onto containerHost (the Pi), not Tower.** Tower is no longer part
+of Nowplay's plan. containerHost is confirmed as a Pi 4, 4GB RAM (3.7GiB usable), with a
+real GUI/display attached. Playwright's Firefox launches there via a native venv (needs
+`playwright install firefox` — the pip package alone doesn't fetch browser binaries, which
+tripped up the first attempt). Tower's Docker/Xvfb proof-of-concept wasn't wasted — it
+validated the headed-Firefox-in-a-container mechanism itself, which is being reused as
+containerHost's scraper container image.
+
+**Container topology: two containers, not three.** Scraper and website, each their own
+container on the Pi, sharing one Docker volume for `nowplay.db`. No separate DB
+container — SQLite isn't a server process, so there's nothing to run as a third
+container; it would only be a volume-owning no-op.
+
+**DB access: direct write, no write API.** The original plan (website owns the DB
+exclusively, scraper POSTs to a write API) was driven by the scraper and DB being on
+different hosts — SQLite's own docs warn locking is unreliable over network filesystems
+(NFS/SMB). That risk doesn't apply once both are on containerHost: a directory
+bind-mounted into two containers on the same machine isn't a network filesystem.
+
+The remaining argument for a write API even same-host was keeping a single writer as a
+correctness property (avoiding two processes racing on the upsert-then-mark-removed
+sequence). This is resolved by folding TMDB metadata enrichment (`scripts/
+tmdb_match_prototype.py`, not yet wired into `cli.py`) into the scraper's own process —
+planned to run automatically as the last step of `scrape all`, since enrichment only ever
+has new work right after a scrape. That makes the scraper the DB's only writer
+regardless, so no API is needed to enforce it.
+
+- Scraper container: bind-mounts the shared `data/` volume, calls `db.upsert_items()` /
+  `mark_removed_for_platform()` / the enrichment write functions directly.
+- Website container: mounts the same volume, reads via `db.py` directly — also no API,
+  just an in-process function call once the website exists.
+- **Website never writes — enforced by code discipline, not a read-only mount.** SQLite's
+  WAL mode (already set in `connect()`) needs write access to the directory even for
+  read-only connections, to create/update the `-wal`/`-shm` sidecar files — a hard
+  read-only mount on the website container risks breaking its reads too. Not
+  independently verified against SQLite's own WAL docs; worth confirming if this becomes
+  a live issue, not treated as certain.
+
+**Not yet done / still open:**
+- Concrete shared-volume path on the Pi — the scraper currently writes to a local
+  `data/nowplay.db` inside its own container; needs defining as the actual shared path
+  both containers will bind-mount.
+- Wiring enrichment into `cli.py` as part of `scrape all` — decided, not yet built.
+- A full `scrape all` end-to-end run on containerHost matching the validation Tower's
+  proof-of-concept got.
+- The website itself — no front end exists yet; tech stack not chosen.
+- **This repo's deployment tooling is still written for Tower and needs updating**:
+  `Dockerfile`'s comments reference Tower throughout (functionally probably still fine,
+  but not re-validated on the Pi's arm64 architecture — Microsoft's
+  `mcr.microsoft.com/playwright/python` base image's arm64 support isn't confirmed here,
+  only that Playwright's Firefox works natively via venv on the Pi, which is a different
+  code path); `scripts/build_and_deploy_tower.sh` is entirely Tower-specific (build on
+  desktop → scp to `tower.cr`) and needs a Pi-equivalent deploy mechanism, not yet
+  decided (Portainer? scp to the Pi directly? something else?) — flagged rather than
+  guessed at.
+
+Full reasoning trail for all of the above is in Notion (Hosting & Architecture, Data
+Model, Project Plan) — this section is a condensed pointer, not a replacement for it.
+
 ## Working style for this project
 - Conclusions-first, structured responses.
 - Honest, balanced technical assessment — flag risk and uncertainty rather than

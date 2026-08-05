@@ -2,7 +2,11 @@
 # Starts Xvfb directly and waits for its socket, rather than using the
 # `xvfb-run` wrapper script. Headed Firefox (deliberately not headless — see
 # nowplay-project-instructions.md, "Technical approach") needs a virtual X
-# display since Tower has no monitor attached.
+# display because this container runs unattended — even though containerHost
+# (the Pi, where this now runs — see "Scraper moved to containerHost" in
+# nowplay-project-instructions.md) has a real monitor attached, this
+# container process itself has no display of its own. Originally written and
+# proven for Tower, which had the same requirement for the same reason.
 #
 # Why not xvfb-run: confirmed on Tower (2026-08-04) that Xvfb itself starts
 # fine, but xvfb-run's own readiness-check/handoff hung indefinitely before
