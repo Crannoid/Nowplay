@@ -41,6 +41,8 @@ Usage:
 """
 from __future__ import annotations
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 from nowplay.db import WatchlistItem
 from nowplay.scrapers.base import PlatformScraper, STATE_DIR
 
@@ -99,7 +101,16 @@ class PrimeVideoScraper(PlatformScraper):
     def extract(self, page) -> list[WatchlistItem]:
         assert TITLE_CARD_SELECTOR is not None
         page.mouse.wheel(0, 3000)
-        page.wait_for_timeout(1500)
+
+        # See netflix.py's extract() for why this replaced a fixed sleep
+        # (2026-08-04): a correct-looking page can still have 0 cards
+        # rendered if the client-side fetch/render hasn't caught up yet.
+        # Waits for any card, not scoped to a Watchlist section specifically
+        # — the section-filtering below still applies once cards exist.
+        try:
+            page.wait_for_selector(TITLE_CARD_SELECTOR, timeout=15000)
+        except PlaywrightTimeoutError:
+            pass
 
         items: list[WatchlistItem] = []
         seen_titles: set[str] = set()

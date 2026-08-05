@@ -418,6 +418,40 @@ correctly recorded it and continued to the remaining platforms rather than
 stopping — a good, if accidental, stress test of the exact failure mode this
 feature exists for.
 
+## Netflix render race found and fixed (2026-08-04)
+
+Paul reported the Netflix page "starts to load but items don't load." Debug
+dump (`data/netflix_debug/`) confirmed this wasn't the profile-selection bug
+found earlier: the embedded profile JSON showed `"profileName":"Paul"` with
+`"isActive":true` — correct profile, not "Kids" (the "Kids" label visible in
+the nav screenshot is a separate quick-link Netflix always shows, not an
+indicator of the active profile — a plausible first read that turned out
+wrong on inspection). `page.url` and the "My List" tab being highlighted
+also confirmed the correct page. But 0 `.title-card` elements existed
+anywhere in the dumped HTML — the page shell rendered, the list content
+didn't, with no error message either.
+
+**Root cause:** `extract()` scrolled and then did a fixed
+`page.wait_for_timeout(1500)` before querying for title-cards. That's a
+guess, not a guarantee — if Netflix's client-side fetch/render for list
+content takes longer than 1.5s after `networkidle` fires (which only
+promises no *network* activity, not that the DOM has finished updating in
+response to the last response), the query runs too early and finds nothing.
+Confirmed via the dump: correct page, correct profile, zero cards — that
+combination only makes sense as a timing race, not a session/selector/
+profile problem.
+
+**Fix:** replaced the fixed sleep with `page.wait_for_selector(...,
+timeout=15000)` in **all five scrapers** (netflix.py, disney_plus.py,
+bbc_iplayer.py, hbo_max.py, prime_video.py) — they all shared the identical
+copy-pasted `mouse.wheel` + `wait_for_timeout(1500)` pattern, so this was a
+latent risk everywhere, not just Netflix; fixed proactively rather than only
+patching the one that got reported. Waits for the real DOM signal (cards
+existing) instead of guessing a delay, and still falls through cleanly to
+each scraper's existing 0-items diagnostics if genuinely nothing appears
+within 15s, rather than raising. Not yet re-tested against a live Netflix
+session — next run will confirm.
+
 **Housekeeping note:** that verification run wrote real files into this
 project's actual `data/` folder — `data/nowplay.db`,
 `data/nowplay.db-journal`, and `data/test_scrape_summary.json` — containing

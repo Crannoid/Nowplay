@@ -29,6 +29,8 @@ Usage:
 """
 from __future__ import annotations
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 from nowplay.db import WatchlistItem
 from nowplay.scrapers.base import PlatformScraper, STATE_DIR
 
@@ -88,7 +90,14 @@ class HBOMaxScraper(PlatformScraper):
     def extract(self, page) -> list[WatchlistItem]:
         assert TITLE_CARD_SELECTOR is not None
         page.mouse.wheel(0, 3000)
-        page.wait_for_timeout(1500)
+
+        # See netflix.py's extract() for why this replaced a fixed sleep
+        # (2026-08-04): a correct-looking page can still have 0 title-cards
+        # if the client-side render hasn't caught up yet.
+        try:
+            page.wait_for_selector(TITLE_CARD_SELECTOR, timeout=15000)
+        except PlaywrightTimeoutError:
+            pass
 
         cards = page.query_selector_all(TITLE_CARD_SELECTOR)
         items: list[WatchlistItem] = []

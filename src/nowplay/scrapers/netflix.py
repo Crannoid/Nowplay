@@ -14,6 +14,8 @@ drift. On first run:
 """
 from __future__ import annotations
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 from nowplay.db import WatchlistItem
 from nowplay.scrapers.base import PlatformScraper, STATE_DIR
 
@@ -82,7 +84,20 @@ class NetflixScraper(PlatformScraper):
         # Netflix's grid lazy-loads as you scroll; my-list is usually small
         # enough to render fully, but scroll a bit to be safe.
         page.mouse.wheel(0, 3000)
-        page.wait_for_timeout(1500)
+
+        # Confirmed 2026-08-04: a fixed sleep here isn't reliable. A debug
+        # dump showed the *correct* page — right profile (Paul, active),
+        # right URL, "My List" tab highlighted — but zero title-cards in the
+        # DOM, meaning the client-side fetch/render for list content was
+        # still in flight when the old fixed 1.5s wait ran out. Waiting for
+        # the actual selector is far more robust than guessing a delay.
+        try:
+            page.wait_for_selector(self.TITLE_CARD_SELECTOR, timeout=15000)
+        except PlaywrightTimeoutError:
+            # Never showed up within 15s — could be a genuinely empty list,
+            # could be something else. Don't raise; let the 0-items path in
+            # run() diagnose it (page.url check, debug dump) instead.
+            pass
 
         cards = page.query_selector_all(self.TITLE_CARD_SELECTOR)
         items: list[WatchlistItem] = []
