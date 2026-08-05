@@ -1,26 +1,34 @@
-"""Throwaway TMDB title-matching prototype — read-only, no schema changes.
+"""TMDB title-matching enrichment — writes into title_metadata + watchlist_items.
 
-Purpose: validate match quality before committing to an enrichment schema
-(see the 2026-08-05 metadata/UI discussion). This mirrors the project's
-existing "discovery mode before extraction mode" pattern already used for
-every scraper (see disney_plus.py, bbc_iplayer.py, etc.) — see real output
-first, decide the real design once you've seen how well title matching
-actually performs against your real watchlist, rather than guessing the
-schema shape upfront.
+Started as a read-only prototype (see the 2026-08-05 metadata/UI discussion
+and Data Model in Notion) to validate match quality before committing to a
+schema — that review is done, match quality was good enough to proceed, and
+this now does the real write. Kept the same "discovery before extraction"
+spirit: still writes the CSV below so a confidence review is always possible
+after the fact, not just a leap of faith.
 
 What this does:
-  1. Reads every active item out of the existing nowplay.db (read-only — no
-     changes to that DB or its schema).
-  2. Looks each title up against TMDB's search API (movie/tv/multi endpoint
-     depending on the scraped media_type), using a free TMDB API key.
-  3. Writes one row per item to a CSV — the scraped title next to what TMDB
-     thinks it matched, a confidence label, poster URL, and a short
-     description — for you to eyeball.
+  1. Reads every active item out of nowplay.db (via db.list_active()).
+  2. For items not yet checked (metadata_checked_at IS NULL), looks the title
+     up against TMDB's search API (movie/tv/multi endpoint depending on the
+     scraped media_type), using a free TMDB API key.
+  3. On a match (exact or fuzzy): writes/reuses a title_metadata row via
+     db.get_or_create_title_metadata() — reused by tmdb_id if another
+     platform's item already matched the same film, so the same poster/
+     overview isn't fetched and stored twice — then links the watchlist_items
+     row to it via db.update_item_metadata().
+  4. On no_match: still calls db.update_item_metadata() with no
+     title_metadata_id, so metadata_checked_at is stamped and this item isn't
+     re-queried against TMDB on every future run.
+  5. Writes one row per item to a CSV — the scraped title next to what TMDB
+     matched, for a manual spot-check of confidence.
 
-What this does NOT do: write anything back to nowplay.db, or get wired into
-cli.py. It's disposable — once match quality has been reviewed, a real
-schema + a real enrichment step (called from cli.py, writing back to the DB)
-should replace it.
+Already-checked items (metadata_checked_at IS NOT NULL) are skipped by
+default — pass --recheck to force every active item through TMDB again (e.g.
+if you want to retry no_match items after TMDB's data improves).
+
+Not yet wired into cli.py as a `python -m nowplay.cli enrich` command — still
+a standalone script, run manually.
 
 Setup:
   1. Free TMDB account -> Settings -> API -> request a (v3) API key:
@@ -180,6 +188,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", help="Only check items for this platform")
     parser.add_argument("--limit", type=int, help="Only check the first N items (spot-check)")
+    parser.add_argument(
+        "--recheck",
+        action="store_true",
+        help="Re-query TMDB for items already checked (metadata_checked_at IS NOT NULL), "
+        "e.g. to retry old no_match items",
+    )
     args = parser.parse_args()
 
     api_key = os.environ.get("TMDB_API_KEY")
@@ -194,10 +208,16 @@ def main() -> None:
     conn = db.connect()
     db.init_db(conn)
     rows = db.list_active(conn, args.platform)
-    conn.close()
+
+    if not args.recheck:
+        rows = [r for r in rows if r["metadata_checked_at"] is None]
 
     if not rows:
-        print("No active watchlist items found. Run a scrape first.")
+        conn.close()
+        print(
+            "Nothing to check — no active watchlist items, or all are already "
+            "enriched (pass --recheck to force a re-check)."
+        )
         return
 
     if args.limit:
@@ -226,6 +246,29 @@ def main() -> None:
             counts[confidence] += 1
 
             poster_path = match.get("poster_path") if match else None
+            poster_url = f"{TMDB_IMAGE_BASE}{poster_path}" if poster_path else ""
+            overview_full = (match.get("overview") or "") if match else ""
+
+            # DB write: reuses an existing title_metadata row if another
+            # platform's item already matched this same tmdb_id (see
+            # db.get_or_create_title_metadata's docstring for why). no_match
+            # still stamps metadata_checked_at via title_metadata_id=None, so
+            # this item isn't re-queried every run.
+            if match:
+                title_metadata_id = db.get_or_create_title_metadata(
+                    conn,
+                    tmdb_id=match["id"],
+                    media_type=result_media_type(match, media_type),
+                    title=result_title(match),
+                    release_year=result_year(match),
+                    poster_url=poster_url or None,
+                    overview=overview_full or None,
+                    match_confidence=confidence,
+                )
+            else:
+                title_metadata_id = None
+            db.update_item_metadata(conn, row["id"], title_metadata_id)
+
             writer.writerow({
                 "platform": row["platform"],
                 "scraped_title": title,
@@ -236,19 +279,22 @@ def main() -> None:
                 "matched_year": result_year(match) if match else "",
                 "tmdb_matched_media_type": result_media_type(match, media_type) if match else "",
                 "tmdb_id": match.get("id") if match else "",
-                "poster_url": f"{TMDB_IMAGE_BASE}{poster_path}" if poster_path else "",
-                "overview": (match.get("overview") or "")[:200] if match else "",
+                "poster_url": poster_url,
+                "overview": overview_full[:200],
                 "top_candidates": format_candidates(candidates),
             })
 
             time.sleep(REQUEST_DELAY_SECONDS)
 
-    print(f"\nDone. Wrote {len(rows)} row(s) to {OUTPUT_PATH}")
+    conn.close()
+
+    print(f"\nDone. Wrote {len(rows)} row(s) to {OUTPUT_PATH} and to nowplay.db.")
     print(f"exact: {counts['exact']}  fuzzy: {counts['fuzzy']}  no_match: {counts['no_match']}")
-    if counts["fuzzy"] or counts["no_match"]:
+    if counts["fuzzy"]:
         print(
-            "Review the 'fuzzy' and 'no_match' rows in the CSV before deciding "
-            "the enrichment schema — that's the whole point of this prototype."
+            "Review the 'fuzzy' rows in the CSV — those matches were written to the DB "
+            "but TMDB's top result didn't match the scraped title exactly, so it's worth "
+            "a spot-check that the right film/show was picked."
         )
 
 

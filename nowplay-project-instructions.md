@@ -181,13 +181,14 @@ home — not always-on, and the goal is to keep it lightly installed.
     If Compose files are wanted, the existing "Docker Compose Manager" CA plugin can
     be installed once — that's installing a tool, not publishing an app.
 - **Auth (`login.py`) stays a local, manual step** — run it wherever there's a real
-  screen (e.g. the Windows PC), in a native venv as the README already documents, not
-  in a container. Copy the resulting `data/<platform>_state.json` onto Unraid for the
-  scheduled scraper to use. Neither Unraid nor the Pi has a monitor attached, so this
-  can't move into the container path.
+  screen (e.g. the Windows PC), in a native venv as the Login & Session Setup page in
+  Notion already documents, not in a container. Copy the resulting
+  `data/<platform>_state.json` onto Unraid for the scheduled scraper to use. Neither
+  Unraid nor the Pi has a monitor attached, so this can't move into the container path.
 
 Not yet built: the website's write API. Currently there's no front end at all (see
-README) — this needs designing before the scraper can be pointed at Unraid for real.
+Requirements & Platform Notes / Project Plan in Notion) — this needs designing before
+the scraper can be pointed at Unraid for real.
 
 ## Scraper-on-Tower proof of concept (started 2026-08-04)
 
@@ -484,6 +485,152 @@ Video / BBC iPlayer / HBO Max get built out).
 scraper + read UI for browsing) is a near-term priority, not something deferred
 until after automation is built — see Project Plan in Notion for the revised phase
 ordering, and Hosting & Architecture for where it runs (containerHost/Pi).
+
+## Metadata enrichment (thumbnails/descriptions) — investigation and prototype (2026-08-05)
+
+Paul asked what metadata (thumbnail, brief description) could be added to
+inform the DB and UI design, given `watchlist_items` currently has neither —
+confirmed from the scraper code and `db.py`: only title, media_type
+(inconsistently populated — Netflix never sets one), platform's own
+external_id, and a handful of raw DOM attributes are captured today.
+
+**Thumbnails from the platforms' own watchlist pages — better than
+expected.** Checked the real HTML dumps in `data/*_debug/page.html`, not
+just the scraper code:
+- **Disney+, Prime Video, HBO Max, BBC iPlayer** all embed a poster/thumbnail
+  `<img src="...">` directly on the watchlist grid card itself — confirmed
+  from real CDN URLs in the dumps (BBC's `ichef.bbci.co.uk`, Disney's
+  `bamgrid.com`, HBO's `discomax.com`, Amazon's `ssl-images-amazon.com`).
+  Grabbing these would need one extra line per scraper, no new page visits.
+- **Netflix** — not confirmed either way. `data/netflix_debug/page.html` on
+  disk is stale (captured during the 0-items render-race bug, before the
+  `wait_for_selector` fix), so there's no title-card markup in it to check.
+  Worth checking on a fresh scrape rather than assuming.
+- **None of the five** expose a synopsis/description at the watchlist grid
+  level — that text lives on each title's own detail page, which would mean
+  an extra page visit per item, per platform. Ruled out as a description
+  source: more scraping surface, more selector maintenance, more automated-
+  traffic exposure on ToS already being treated carefully (see "Context /
+  constraints established" above).
+
+**Third-party metadata source evaluated and chosen: TMDB.** Compared three
+options (web-searched, not assumed, since API terms/offerings change):
+- **TMDB** (The Movie Database) — free for non-commercial use with
+  attribution, ~50 req/sec ceiling (nowhere near this project's volume), one
+  search call returns both `poster_path` and `overview` (a short plot
+  blurb) for movies or TV. Chosen.
+- **IMDb** — now has an official API, but it's AWS Data Exchange, GraphQL,
+  commercial-tier pricing — not a fit for a free personal tool. IMDb's own
+  free non-commercial datasets (title/year/genre/rating) don't include
+  images or plot text at all.
+- **OMDb** (IMDb-data wrapper) — free tier includes plot (1,000 req/day,
+  fine for this project's volume) but gates the Poster API behind a paid
+  Patreon tier, so it alone doesn't solve the thumbnail need the way TMDB
+  does in one call.
+
+**Sequencing decision: prototype match quality before committing schema.**
+Rather than guess the enrichment schema shape (columns on `watchlist_items`
+vs. a separate table; whether a confidence/review-queue field is needed) and
+risk rebuilding it, applied the same "discovery mode before extraction mode"
+pattern this project already used for every scraper (Disney+, BBC iPlayer,
+HBO Max, Prime Video were all built as discovery-first, selectors confirmed
+from real dumps before extraction logic was written) — see real TMDB match
+quality against Paul's actual watchlist titles first, then design the schema
+around what that shows.
+
+**Built:** `scripts/tmdb_match_prototype.py` — read-only against
+`nowplay.db` (uses the existing `db.list_active()`, no schema/DB writes), no
+new dependency (stdlib `urllib`, not `requests`, per this project's existing
+minimal-dependencies stance — see `db.py`'s module docstring). For each
+active watchlist item it searches TMDB (`/search/movie`, `/search/tv`, or
+`/search/multi` depending on the scraped `media_type` — `multi` is the
+fallback when the scraper didn't capture a reliable type, e.g. Netflix) and
+writes a CSV (`data/tmdb_match_prototype.csv`) with the matched title/year,
+a `confidence` label (`exact` / `fuzzy` / `no_match`, based on whether
+TMDB's top-ranked result's title matches the scraped title exactly), poster
+URL, a truncated overview, and TMDB's own `movie`/`tv` classification per
+match (`tmdb_matched_media_type`) — useful for backfilling media_type gaps
+in scrapers that don't set one, since TMDB tags each `/search/multi` result
+with its own type.
+
+**Bug found and fixed during setup:** `/search/multi` returns people
+(actors/directors) alongside movies and TV shows in the same result list,
+each tagged with its own `media_type` field. The first version of the script
+didn't filter these out, so a title that happened to match a person's name
+could have been picked as if it were a movie/show match. Fixed by dropping
+any `multi` result whose `media_type` isn't `movie` or `tv` before scoring
+it as a candidate.
+
+**Requires a free TMDB API key** (Settings → API → request a key, personal/
+non-commercial application type) set as `TMDB_API_KEY` in the environment
+the script runs in. Confirmed working end-to-end by Paul (2026-08-05).
+
+**Status: prototype run, not yet reviewed for match quality.** Next step is
+Paul reviewing the `fuzzy`/`no_match` rows in `data/tmdb_match_prototype.csv`
+against his real watchlist — that determines whether a couple of extra
+columns on `watchlist_items` are enough, or whether a separate
+`title_metadata` table is warranted (leaning toward the latter, to avoid
+querying TMDB twice for the same film sitting on two platforms' watchlists,
+given the current schema's one-row-per-platform-per-title shape). Schema
+change and a real (DB-writing) enrichment step, wired into `cli.py`, are not
+yet built — this prototype is deliberately disposable, per its own docstring.
+
+## Metadata enrichment schema decided and implemented (2026-08-05)
+
+Following on from the TMDB prototype above: Paul reviewed match quality
+against the real watchlist and confirmed it was good enough to proceed.
+Storage engine reconfirmed as SQLite too — Paul's own numbers (never more
+than ~100 items, under 100 DB accesses a month) rule out Postgres as
+unneeded overhead, consistent with the 2026-08-03 decision.
+
+**Schema change** (`src/nowplay/schema.sql`): added a `title_metadata` table
+rather than columns on `watchlist_items`, keyed on TMDB's `tmdb_id`
+(`UNIQUE`). Reasoning: `watchlist_items` is one row per platform per title,
+so the same film sitting on two platforms' watchlists would mean two
+separate TMDB lookups and two copies of the same poster/overview if
+enrichment lived as flat columns — a separate table lets both rows share one
+fetch. Flagged honestly as a close call, not a slam dunk: at ≤100 items and
+this access pattern, the API-call savings from that dedup are negligible: the
+real argument for the separate table is "one canonical record per film" as a
+correctness property, which costs only one extra table and a nullable FK at
+this scale. `watchlist_items` gained two columns: `title_metadata_id` (FK,
+nullable) and `metadata_checked_at` (stamped on every enrichment attempt,
+including a `no_match`, so the enrichment step doesn't re-query TMDB for a
+confirmed-unmatched title on every future scrape).
+
+**Migration handling**: `schema.sql`'s `CREATE TABLE IF NOT EXISTS` only
+covers a brand-new DB. `db.init_db()` now also runs
+`_migrate_add_metadata_columns()`, which checks `PRAGMA table_info` and adds
+the two new columns to an existing `watchlist_items` table if missing —
+needed for the DB already running on Tower. Verified against a simulated
+pre-2026-08-05 DB: existing rows preserved, migration is idempotent on
+repeat `init_db()` calls. One subtlety: `idx_watchlist_metadata` (indexing
+`title_metadata_id`) couldn't live in `schema.sql` itself, since
+`executescript()` runs the whole file in one pass, before the Python-side
+migration adds that column to an old DB — it's created separately in
+`init_db()`, after the migration step. Caught by testing the migration path
+directly rather than assumed; see comment in `schema.sql`.
+
+**`connect()`** now sets `PRAGMA journal_mode = WAL`. Not needed for today's
+single-process CLI usage, but this is the same `connect()` the eventual
+website process will use once the DB moves to the Pi (see Hosting &
+Architecture) — set now so there's no separate migration step for it later.
+
+**`scripts/tmdb_match_prototype.py`** promoted from read-only prototype to a
+real (if still standalone, not yet wired into `cli.py`) enrichment step: on
+a match it calls `db.get_or_create_title_metadata()` (dedups by `tmdb_id`)
+then `db.update_item_metadata()` to link the watchlist row; on `no_match` it
+still calls `update_item_metadata()` with no `title_metadata_id`, purely to
+stamp `metadata_checked_at`. Added `--recheck` to force re-querying
+already-checked items (e.g. retrying old `no_match` rows). Still writes the
+CSV too, so a confidence spot-check is always possible after the fact.
+Skips items with `metadata_checked_at IS NOT NULL` by default, so re-running
+it doesn't re-burn TMDB calls on items already enriched.
+
+Not yet done: wiring enrichment into `cli.py` as a real command (still a
+standalone script), and the UI itself, which is what actually consumes
+`poster_url`/`overview` — see "UI priority correction" above for why that's
+the actual near-term priority.
 
 ## Working style for this project
 - Conclusions-first, structured responses.

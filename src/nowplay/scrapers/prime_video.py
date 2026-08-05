@@ -41,6 +41,8 @@ Usage:
 """
 from __future__ import annotations
 
+import re
+
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from nowplay.db import WatchlistItem
@@ -55,6 +57,23 @@ CAROUSEL_TITLE_SELECTOR = '[data-testid="carousel-title"]'
 WATCHLIST_SECTION_PREFIX = "Watchlist"
 
 TITLE_CARD_SELECTOR: str | None = 'article[data-testid="card"]'
+
+# Amazon's data-card-title for a TV series includes a trailing season marker
+# (e.g. "The Boys - Season 4"), which TMDB's own titles never have — this was
+# silently breaking the TMDB metadata-match step (Requirements & Platform
+# Notes / Data Model in Notion). Confirmed by Paul 2026-08-06. Stripped here,
+# before the item reaches the DB, same principle as Disney+'s KNOWN_BADGES
+# stripping in disney_plus.py. Hyphen variants (-, en dash, em dash) covered
+# since Amazon's own markup for this wasn't confirmed to always use a plain
+# hyphen. Not confirmed exhaustive against every possible Amazon suffix
+# (e.g. "Series 4" is a UK-English alternative seen on other Amazon surfaces,
+# not observed on Prime Video's card markup so not covered yet) — if titles
+# still fail to match after this, check for a similarly-shaped suffix first.
+SEASON_SUFFIX_RE = re.compile(r"\s*[-–—]\s*Season\s+\d+\s*$", re.IGNORECASE)
+
+
+def _strip_season_suffix(title: str) -> str:
+    return SEASON_SUFFIX_RE.sub("", title).strip()
 
 
 class PrimeVideoScraper(PlatformScraper):
@@ -124,7 +143,10 @@ class PrimeVideoScraper(PlatformScraper):
                 continue
 
             for card in section.query_selector_all(TITLE_CARD_SELECTOR):
-                title = card.get_attribute("data-card-title")
+                raw_title = card.get_attribute("data-card-title")
+                if not raw_title:
+                    continue
+                title = _strip_season_suffix(raw_title)
                 if not title or title in seen_titles:
                     continue
                 seen_titles.add(title)
@@ -137,6 +159,11 @@ class PrimeVideoScraper(PlatformScraper):
                         raw={
                             "entitlement": card.get_attribute("data-card-entitlement"),
                             "section": heading,
+                            # Kept for debugging/re-parsing — see raw_json's
+                            # purpose in Data Model (Notion). Only differs
+                            # from `title` when the season-suffix strip above
+                            # actually changed something.
+                            "scraped_title": raw_title,
                         },
                     )
                 )

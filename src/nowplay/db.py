@@ -36,12 +36,45 @@ def connect(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # WAL lets the website's read path (browsing UI) and write path (the
+    # scraper's POST via the write API) run without one blocking the other.
+    # Not needed for the current single-process CLI usage, but this is the
+    # same connect() the eventual website process will use once the DB moves
+    # to the Pi (see Hosting & Architecture in Notion) — set it now so
+    # there's no separate migration step for it later.
+    conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_PATH.read_text())
+    _migrate_add_metadata_columns(conn)
+    # Deliberately created here rather than in schema.sql — see the comment
+    # next to idx_watchlist_platform/idx_watchlist_removed in schema.sql for
+    # why this one index has to come after the migration step above.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_watchlist_metadata ON watchlist_items (title_metadata_id)"
+    )
     conn.commit()
+
+
+def _migrate_add_metadata_columns(conn: sqlite3.Connection) -> None:
+    """Add title_metadata_id/metadata_checked_at to pre-2026-08-05 databases.
+
+    schema.sql's CREATE TABLE IF NOT EXISTS only creates watchlist_items with
+    these columns on a brand-new DB — it can't add columns to a table that
+    already exists (e.g. the DB already running on Tower/Unraid). SQLite has
+    no "ADD COLUMN IF NOT EXISTS", so check PRAGMA table_info first; this
+    runs on every init_db() call, so it must stay a no-op once applied.
+    """
+    existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(watchlist_items)")}
+    if "title_metadata_id" not in existing_columns:
+        conn.execute(
+            "ALTER TABLE watchlist_items ADD COLUMN title_metadata_id "
+            "INTEGER REFERENCES title_metadata(id) ON DELETE SET NULL"
+        )
+    if "metadata_checked_at" not in existing_columns:
+        conn.execute("ALTER TABLE watchlist_items ADD COLUMN metadata_checked_at TEXT")
 
 
 def upsert_items(conn: sqlite3.Connection, items: list[WatchlistItem]) -> None:
@@ -98,6 +131,60 @@ def mark_removed_for_platform(conn: sqlite3.Connection, platform: str, seen_titl
     )
     conn.commit()
     return len(to_remove)
+
+
+def get_or_create_title_metadata(
+    conn: sqlite3.Connection,
+    tmdb_id: int,
+    media_type: str,
+    title: str,
+    release_year: Optional[str],
+    poster_url: Optional[str],
+    overview: Optional[str],
+    match_confidence: str,
+) -> int:
+    """Return the id of the title_metadata row for this tmdb_id, creating it if needed.
+
+    This is the dedup point: if another platform's watchlist item already
+    matched the same TMDB title, its row is reused rather than duplicated —
+    the whole reason metadata lives in its own table (see schema.sql). Does
+    NOT update an existing row's fields on a repeat match — first fetch wins;
+    call this again with fresher data deliberately (e.g. a periodic
+    re-enrichment pass) if stale posters/overviews become a real problem.
+    """
+    conn.execute(
+        """
+        INSERT INTO title_metadata
+            (tmdb_id, media_type, title, release_year, poster_url, overview,
+             match_confidence, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (tmdb_id) DO NOTHING
+        """,
+        (tmdb_id, media_type, title, release_year, poster_url, overview, match_confidence, _now()),
+    )
+    row = conn.execute(
+        "SELECT id FROM title_metadata WHERE tmdb_id = ?", (tmdb_id,)
+    ).fetchone()
+    conn.commit()
+    return row["id"]
+
+
+def update_item_metadata(
+    conn: sqlite3.Connection,
+    item_id: int,
+    title_metadata_id: Optional[int],
+) -> None:
+    """Link a watchlist_items row to a title_metadata row (or to none, for a no_match).
+
+    Always stamps metadata_checked_at, including on a no_match (title_metadata_id
+    is None) — that's what stops the enrichment step re-querying TMDB for the
+    same confirmed-unmatched title on every future scrape.
+    """
+    conn.execute(
+        "UPDATE watchlist_items SET title_metadata_id = ?, metadata_checked_at = ? WHERE id = ?",
+        (title_metadata_id, _now(), item_id),
+    )
+    conn.commit()
 
 
 def list_active(conn: sqlite3.Connection, platform: Optional[str] = None) -> list[sqlite3.Row]:
