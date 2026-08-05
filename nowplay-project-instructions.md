@@ -449,8 +449,12 @@ latent risk everywhere, not just Netflix; fixed proactively rather than only
 patching the one that got reported. Waits for the real DOM signal (cards
 existing) instead of guessing a delay, and still falls through cleanly to
 each scraper's existing 0-items diagnostics if genuinely nothing appears
-within 15s, rather than raising. Not yet re-tested against a live Netflix
-session — next run will confirm.
+within 15s, rather than raising.
+
+**Confirmed fixed (2026-08-04, same day).** Paul re-ran the scrape —
+working. `wait_for_selector` replacing the fixed sleep resolved the render
+race. This closes out the last known issue from this session's testing
+across all five platforms.
 
 **Housekeeping note:** that verification run wrote real files into this
 project's actual `data/` folder — `data/nowplay.db`,

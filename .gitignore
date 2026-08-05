@@ -2,11 +2,14 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-syncffs*
+sync.ffs*
 
 # Local data: sqlite db + saved login sessions (contain auth cookies — never commit)
 data/*.db
 data/*.json
 !data/.gitkeep
 
+sync.ffs*
+
 .env
+sync.ffs*
