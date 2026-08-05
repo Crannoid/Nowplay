@@ -89,7 +89,15 @@ def normalize_media_type(raw: str | None) -> str:
 
 
 def tmdb_search(api_key: str, title: str, media_type: str) -> list[dict]:
-    """Call TMDB's search endpoint, return the raw `results` list (possibly empty)."""
+    """Call TMDB's search endpoint, return the raw `results` list (possibly empty).
+
+    /search/multi returns movies, TV shows, AND people in one list, each
+    tagged with its own 'media_type' field ('movie' | 'tv' | 'person') —
+    /search/movie and /search/tv don't need this since the endpoint itself
+    already scopes the type. Person results are filtered out here so a title
+    that happens to match an actor/director's name doesn't get treated as a
+    movie/show match.
+    """
     endpoint = {"movie": "search/movie", "tv": "search/tv", "multi": "search/multi"}[media_type]
     params = urllib.parse.urlencode({"api_key": api_key, "query": title, "include_adult": "false"})
     url = f"{TMDB_API_BASE}/{endpoint}?{params}"
@@ -97,7 +105,10 @@ def tmdb_search(api_key: str, title: str, media_type: str) -> list[dict]:
     for attempt in range(3):
         try:
             with urllib.request.urlopen(url, timeout=15) as resp:
-                return json.loads(resp.read()).get("results", [])
+                results = json.loads(resp.read()).get("results", [])
+                if media_type == "multi":
+                    results = [r for r in results if r.get("media_type") in ("movie", "tv")]
+                return results
         except urllib.error.HTTPError as exc:
             if exc.code == 429 and attempt < 2:
                 retry_after = int(exc.headers.get("Retry-After", "2"))
@@ -119,6 +130,20 @@ def result_title(r: dict) -> str:
 def result_year(r: dict) -> str:
     date = r.get("release_date") or r.get("first_air_date") or ""
     return date[:4] if date else ""
+
+
+def result_media_type(r: dict, searched_as: str) -> str:
+    """TMDB's own movie-vs-series classification for a matched result.
+
+    For /search/movie and /search/tv, the endpoint itself already tells you
+    the type (that's what `searched_as` is). For /search/multi, TMDB tags
+    each result with its own 'media_type' — this is the useful part for
+    titles where our own scrapers didn't capture a reliable media_type in
+    the first place (Netflix doesn't set one at all; see netflix.py).
+    """
+    if searched_as in ("movie", "tv"):
+        return searched_as
+    return r.get("media_type", "")
 
 
 def best_match(scraped_title: str, results: list[dict]) -> tuple[str, dict | None, list[dict]]:
@@ -182,8 +207,8 @@ def main() -> None:
 
     fieldnames = [
         "platform", "scraped_title", "scraped_media_type", "tmdb_media_type_searched",
-        "confidence", "matched_title", "matched_year", "tmdb_id", "poster_url",
-        "overview", "top_candidates",
+        "confidence", "matched_title", "matched_year", "tmdb_matched_media_type",
+        "tmdb_id", "poster_url", "overview", "top_candidates",
     ]
     counts = {"exact": 0, "fuzzy": 0, "no_match": 0}
 
@@ -209,6 +234,7 @@ def main() -> None:
                 "confidence": confidence,
                 "matched_title": result_title(match) if match else "",
                 "matched_year": result_year(match) if match else "",
+                "tmdb_matched_media_type": result_media_type(match, media_type) if match else "",
                 "tmdb_id": match.get("id") if match else "",
                 "poster_url": f"{TMDB_IMAGE_BASE}{poster_path}" if poster_path else "",
                 "overview": (match.get("overview") or "")[:200] if match else "",
