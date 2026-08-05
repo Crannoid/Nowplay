@@ -5,7 +5,14 @@ venv/
 sync.ffs*
 
 # Local data: sqlite db + saved login sessions (contain auth cookies — never commit)
+# *.db-journal and the WAL-mode sidecars (*-wal/*-shm, connect() sets
+# PRAGMA journal_mode = WAL — see db.py) weren't covered by `data/*.db`
+# before (added 2026-08-06, after data/nowplay.db-journal turned up tracked
+# and modified from a sandbox test run — see nowplay-project-instructions.md).
 data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
 data/*.json
 !data/.gitkeep
 

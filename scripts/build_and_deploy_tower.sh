@@ -1,4 +1,15 @@
 #!/usr/bin/env bash
+# HISTORICAL (2026-08-06) — Tower is no longer part of Nowplay's plan; the
+# scraper moved to containerHost (the Pi). See "Scraper moved to
+# containerHost..." in nowplay-project-instructions.md. Kept for reference
+# (it's what validated Docker + Xvfb + headed Firefox in a container at all);
+# use scripts/build_and_deploy_pi.sh for actual deploys going forward. Also
+# note: this script's docker-save/scp/docker-load approach assumes the build
+# machine and target share an architecture (both x86, Tower included) — it
+# is NOT reused as-is for the Pi (arm64) without cross-compiling, which is
+# why build_and_deploy_pi.sh builds natively on the Pi instead. See that
+# script's own header comment.
+#
 # Build the scraper image on the Ubuntu desktop, then ship it to Tower
 # (Unraid) without a registry: docker save -> scp -> docker load.
 #

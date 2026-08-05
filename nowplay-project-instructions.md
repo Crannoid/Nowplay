@@ -698,6 +698,69 @@ regardless, so no API is needed to enforce it.
 Full reasoning trail for all of the above is in Notion (Hosting & Architecture, Data
 Model, Project Plan) — this section is a condensed pointer, not a replacement for it.
 
+## Code updated to match the above (2026-08-06, same day)
+
+The "not yet done" items above are now mostly done in code, not just decided:
+
+- **`src/nowplay/enrich.py`** (new) — TMDB enrichment logic moved out of
+  `scripts/tmdb_match_prototype.py` so it's part of the installed package and
+  available inside the scraper container (`scripts/` isn't copied into the
+  image). Also fixes a real bug found while doing this: a failed TMDB
+  request (network/HTTP error) was previously indistinguishable from a
+  genuine "no match" and got permanently stamped as checked — fine for a
+  manually-run, human-watched prototype, much riskier once automated. Failed
+  requests now leave `metadata_checked_at` untouched so they're retried on
+  the next run.
+- **`cli.py`** — `cmd_scrape_all()` now runs enrichment automatically as a
+  last, failure-isolated step (`python -m nowplay.cli enrich` also works
+  standalone). Non-fatal if `TMDB_API_KEY` isn't set.
+- **`scripts/tmdb_match_prototype.py`** — refactored to a thin wrapper around
+  `nowplay.enrich`, kept for manual runs with a CSV confidence report.
+- **`Dockerfile`** — base image switched from `mcr.microsoft.com/playwright/python`
+  to `python:3.12-bookworm` + `playwright install --with-deps firefox`
+  (Playwright's own documented "build your own image" recipe). Reason:
+  researched rather than assumed — a GitHub feature request asking Microsoft
+  to publish multi-arch Playwright Docker images was closed "not planned"
+  (github.com/microsoft/playwright/issues/29819), so betting the Pi (arm64)
+  would get a working image from that tag was a real risk, not a formality.
+  This also removes the old browser/pip version-pinning trap, since
+  `playwright install` always fetches the matching browser build.
+- **`scripts/build_and_deploy_pi.sh`** (new) — replaces
+  `build_and_deploy_tower.sh` (kept, marked historical) for deploys to
+  containerHost. Builds natively on the Pi via rsync + remote `docker build`
+  rather than cross-compiling on this x86 machine, to avoid an
+  amd64-vs-arm64 mismatch. **Default choice, not confirmed with Paul** —
+  Portainer's own build-from-Compose flow is a reasonable alternative.
+- **`docker-compose.yml`** (new) — scraper service + a shared named volume
+  (`nowplay_data`), Portainer-importable. Website service is commented out
+  (doesn't exist yet).
+
+**Not done / still needs Paul:** none of this has been build/run-tested
+against real Docker or the real Pi from this session (no `docker` binary and
+no SSH access in this sandbox) — the first real `docker build` + run there
+is still the actual confirmation, same caveat as every prior "confirmed
+locally, not yet run in the container" step in this log.
+
+**Housekeeping incident during verification:** testing `enrich_active_items`
+and `cmd_scrape_all` against a real SQLite connection in this sandbox hit the
+same pre-existing issue logged earlier in this file (`sqlite3.OperationalError:
+disk I/O error` specific to this sandbox's mounted filesystem, combined with
+`db.connect()`'s default argument being bound at import time, not per-call —
+a monkeypatched `DEFAULT_DB_PATH` in a test didn't actually redirect it).
+This wrote `data/nowplay.db` (0 bytes) and `data/nowplay.db-journal` into the
+**real** project data folder again. Same as last time, this sandbox's mount
+doesn't permit deleting them (`Operation not permitted`) — **these need
+deleting by hand.** `nowplay.db` was already correctly gitignored
+(`data/*.db`); `nowplay.db-journal` was not (gitignore only covered `.db`,
+not `.db-journal`/WAL sidecars) and was tracked and showing as modified —
+fixed in `.gitignore` and untracked via `git rm --cached` this session. One
+more thing to check on Paul's end: that `git rm --cached` left a
+`.git/index.lock` file this sandbox also couldn't delete
+(`Operation not permitted`); `git status`/`git add` kept working fine
+afterward from inside this sandbox, so it looks benign, but it wasn't
+possible to verify against a real git client outside the sandbox — worth a
+quick check that `git status` still works normally on Paul's own machine.
+
 ## Working style for this project
 - Conclusions-first, structured responses.
 - Honest, balanced technical assessment — flag risk and uncertainty rather than

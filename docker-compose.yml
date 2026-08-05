@@ -1,0 +1,67 @@
+# Compose stack for containerHost (the Pi). Portainer already manages
+# containerHost as a remote environment and supports Compose stacks per
+# environment (see Hosting & Architecture in Notion), so this is written to
+# be importable there directly, not just for local `docker compose` use.
+#
+# Topology (decided 2026-08-06 — see Hosting & Architecture / Data Model /
+# Project Plan in Notion, and "DB access and container topology decided" in
+# nowplay-project-instructions.md):
+#   - Two containers, not three: scraper and website, sharing one volume.
+#   - No separate DB container — SQLite isn't a server process, there's
+#     nothing to run as a third container.
+#   - The scraper is the DB's sole writer (including TMDB enrichment, folded
+#     into `scrape all` — see cli.py). The website is read-only, enforced by
+#     code discipline rather than a read-only mount (SQLite's WAL mode needs
+#     write access to the directory even for readers).
+#
+# The website service below is commented out — no front end has been built
+# yet (Phase 3, not started — see Project Plan). Uncomment and fill in
+# `build`/`image` once it exists; it should mount the same `nowplay_data`
+# volume read-write at the filesystem level (Docker doesn't have a clean
+# per-service read-only view of one named volume shared with a read-write
+# writer), with "never write" enforced in the website's own code, not by the
+# mount.
+
+services:
+  scraper:
+    build: .
+    image: nowplay-scraper:latest
+    # Not a persistent service — a scheduled batch job (cron/systemd on the
+    # Pi, or Portainer's own scheduling if preferred), run a few times a
+    # week. Automation/scheduling itself isn't built yet (Phase 4 — see
+    # Project Plan), so for now this just defines the container; running it
+    # unattended on a schedule is separate, not-yet-done work.
+    restart: "no"
+    volumes:
+      - nowplay_data:/app/data
+    environment:
+      # Required for the TMDB enrichment step folded into `scrape all` —
+      # skipped (not fatal) if unset. Set via Portainer's environment
+      # variables UI, or a .env file alongside this compose file (not
+      # committed — see .gitignore).
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+
+  # website:
+  #   build: ./website          # path not decided — website tech stack is
+  #                              # still an open item, see Project Plan
+  #   image: nowplay-website:latest
+  #   restart: unless-stopped   # always-on, unlike the scraper
+  #   volumes:
+  #     - nowplay_data:/app/data
+  #   ports:
+  #     - "8080:8080"           # LAN-only — no reverse proxy / external
+  #                              # exposure needed per current scope
+
+volumes:
+  nowplay_data:
+    # Named volume rather than a bind mount to a specific host path, so this
+    # file doesn't hard-code a filesystem layout Paul hasn't confirmed yet
+    # (see "Concrete shared-volume path on the Pi" in Hosting & Architecture,
+    # still an open item). If a specific host path is preferred instead
+    # (e.g. for easier backup/inspection), replace this with:
+    #   nowplay_data:
+    #     driver: local
+    #     driver_opts:
+    #       type: none
+    #       o: bind
+    #       device: /path/on/the/pi/nowplay-data

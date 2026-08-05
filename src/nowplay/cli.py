@@ -4,21 +4,31 @@
     python -m nowplay.cli scrape all       # run every registered scraper in turn;
                                             # one platform erroring doesn't stop the
                                             # rest — see cmd_scrape_all's docstring.
+                                            # Also runs TMDB enrichment over newly
+                                            # scraped items afterward (decided
+                                            # 2026-08-06 — see cmd_scrape_all).
                                             # This is the container's default command.
+    python -m nowplay.cli enrich           # run TMDB enrichment on its own, e.g. to
+                                            # retry without a full re-scrape
     python -m nowplay.cli list             # print all active watchlist items
     python -m nowplay.cli list netflix     # filter by platform
 
 For logging in / capturing a session, use scripts/login.py instead — that's a
 separate manual, interactive step, not part of the normal CLI flow.
+
+For a manual enrichment run with a CSV confidence report (rather than just
+the summary this prints), use scripts/tmdb_match_prototype.py instead — it
+wraps the same nowplay.enrich logic used here.
 """
 from __future__ import annotations
 
 import json
+import os
 import sys
 import traceback
 from datetime import datetime, timezone
 
-from nowplay import db
+from nowplay import db, enrich
 from nowplay.scrapers.bbc_iplayer import BBCiPlayerScraper
 from nowplay.scrapers.disney_plus import DisneyPlusScraper
 from nowplay.scrapers.hbo_max import HBOMaxScraper
@@ -33,8 +43,9 @@ SCRAPERS = {
     "prime_video": PrimeVideoScraper,
 }
 
-# Written next to nowplay.db (same bind-mounted data/ dir on Tower) after
-# every `scrape all` run, so the outcome survives past the container's own
+# Written next to nowplay.db (the same bind-mounted data/ dir, shared with
+# the website container — see Hosting & Architecture in Notion) after every
+# `scrape all` run, so the outcome survives past the container's own
 # ephemeral logs. Not a replacement for real alerting (healthchecks.io,
 # per Automation & Scheduling — not yet built), just makes the last run's
 # result inspectable without needing `docker logs` on a container that may
@@ -89,9 +100,16 @@ def cmd_scrape_all() -> None:
     (stale selectors erroring instead of just returning 0, a browser launch
     failure, a network blip) is caught, printed with a full traceback, and
     recorded — it does NOT stop the remaining platforms from running. This
-    is the container's default command on Tower, per the failure-isolation
-    decision already recorded in Automation & Scheduling: Netflix should
-    keep working even if Disney+'s selectors have drifted, and vice versa.
+    is the scraper container's default command on containerHost, per the
+    failure-isolation decision already recorded in Automation & Scheduling:
+    Netflix should keep working even if Disney+'s selectors have drifted,
+    and vice versa.
+
+    TMDB enrichment (cmd_enrich) runs once at the end, after every platform
+    has had a chance to run — not per-platform, since it processes whatever's
+    newly unenriched across the whole DB regardless of which platform added
+    it. Also failure-isolated from the scraping results above (decided
+    2026-08-06, see Hosting & Architecture in Notion).
     """
     started_at = datetime.now(timezone.utc).isoformat()
     summary: dict[str, dict] = {}
@@ -124,6 +142,20 @@ def cmd_scrape_all() -> None:
                 f"marked {result['removed']} as removed."
             )
 
+    print("\n=== Enrichment ===", flush=True)
+    try:
+        enrich_counts = cmd_enrich()
+        if enrich_counts is None:
+            summary["_enrichment"] = {"status": "skipped_no_api_key"}
+        else:
+            summary["_enrichment"] = {"status": "ok", **enrich_counts}
+    except Exception as exc:  # noqa: BLE001 - same failure-isolation policy as
+        # each platform above: enrichment is a secondary step, so a bug or
+        # outage here must not erase the scraping results already recorded.
+        traceback.print_exc()
+        summary["_enrichment"] = {"status": "error", "error": repr(exc)}
+        print(f"enrichment: FAILED — {exc!r}")
+
     print("\n=== Summary ===")
     for platform, info in summary.items():
         print(f"{platform}: {info}")
@@ -140,6 +172,41 @@ def cmd_scrape_all() -> None:
         # later, cron/healthchecks.io tell a failed run from a clean one
         # without parsing log text.
         sys.exit(1)
+
+
+def cmd_enrich(platform: str | None = None, recheck: bool = False) -> dict | None:
+    """Run TMDB metadata enrichment over active watchlist items.
+
+    Called automatically at the end of cmd_scrape_all() (decided 2026-08-06 —
+    see Hosting & Architecture in Notion: folding enrichment into the
+    scraper's own process is what keeps the scraper the DB's only writer,
+    which is why no write API is needed even with the scraper and website as
+    separate containers). Also runnable standalone via `python -m
+    nowplay.cli enrich`, e.g. to retry without a full re-scrape.
+
+    Non-fatal if TMDB_API_KEY isn't set — prints a message and returns None
+    rather than raising, so a container without the key configured yet still
+    scrapes successfully, just without enrichment.
+    """
+    api_key = os.environ.get("TMDB_API_KEY")
+    if not api_key:
+        print(
+            "TMDB_API_KEY not set — skipping metadata enrichment. Get a free key at "
+            "https://www.themoviedb.org/settings/api and set it as an env var to enable this."
+        )
+        return None
+
+    conn = db.connect()
+    db.init_db(conn)
+    counts = enrich.enrich_active_items(conn, api_key, platform=platform, recheck=recheck)
+    conn.close()
+
+    print(
+        f"Enrichment: checked {counts['checked']} "
+        f"(exact {counts['exact']}, fuzzy {counts['fuzzy']}, no_match {counts['no_match']}), "
+        f"{counts['failed']} failed request(s) left for next run"
+    )
+    return counts
 
 
 def cmd_list(platform: str | None = None) -> None:
@@ -171,6 +238,8 @@ def main() -> None:
             cmd_scrape_all()
         else:
             cmd_scrape(args[0])
+    elif command == "enrich":
+        cmd_enrich(args[0] if args else None)
     elif command == "list":
         cmd_list(args[0] if args else None)
     else:
