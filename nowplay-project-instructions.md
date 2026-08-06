@@ -879,6 +879,74 @@ caveat as every other component in this project so far. Needs a real
 `docker compose up` on the Pi next, then a phone-browser check against
 `http://<pi-ip>:8080`.
 
+## Netflix duplicate rows found and fixed (2026-08-06, same day)
+
+Paul reported the website showing two of every Netflix title. Confirmed
+against the real Pi DB (`sqlite3 ~/Docker/Nowplay/nowplay.db "SELECT id,
+title, external_id, first_seen_at, last_seen_at FROM watchlist_items WHERE
+platform='netflix'..."`): every title had exactly two rows, both with an
+empty `external_id`, `first_seen_at` ~76 seconds apart — two scrapes in the
+same session, not two separate days.
+
+**Root cause:** `watchlist_items` had `UNIQUE (platform, title,
+external_id)`. SQL treats two `NULL`s as non-equal for uniqueness purposes —
+so for any platform where `external_id` comes back `NULL`, `ON CONFLICT`
+never matched on a re-scrape, and every run inserted a fresh duplicate row
+instead of updating the existing one. `netflix.py`'s `extract()` only
+populates `external_id` when it finds an all-digit path segment in the
+card's `href`; evidently that didn't hold across these two scrapes. Prime
+Video has the identical exposure — it never sets `external_id` at all (see
+`prime_video.py`) — it just hasn't been scraped a second time yet to reveal
+it (only had its one discovery-pass run, per Project Plan). Confirmed the
+right identity is `(platform, title)` alone, not a guess: `mark_removed_for_
+platform()` already only ever matched on title, so the 3-column constraint
+was inconsistent with the rest of the codebase from the start, not just
+exposed by Netflix.
+
+**Fixed:**
+- `schema.sql` — `UNIQUE (platform, title, external_id)` → `UNIQUE
+  (platform, title)`.
+- `db.py`'s `upsert_items()` — `ON CONFLICT` target updated to match;
+  `external_id` still stored/refreshed on every upsert (via `COALESCE`, so a
+  later `NULL` can't clobber an already-captured real id), just no longer
+  part of the identity a row is matched on.
+- `db.py` — new `_migrate_dedupe_and_fix_watchlist_unique()`, wired into
+  `init_db()` after the existing metadata-columns migration (needs those
+  columns to already exist, since it rebuilds the whole table and carries
+  them over). Detects the old 3-column constraint via `sqlite_master`'s
+  stored CREATE TABLE text (`PRAGMA table_info` doesn't expose table-level
+  UNIQUE constraints), merges any existing duplicate `(platform, title)`
+  rows first — preferring an active copy's `removed_at` over a stale
+  removed one, and keeping whichever copy's enrichment
+  (`title_metadata_id`/`metadata_checked_at`) already exists rather than
+  discarding it — then rebuilds the table with the corrected constraint and
+  recreates the three indexes (rebuilding drops them, since they follow the
+  renamed-then-dropped old table). Idempotent, safe on every `init_db()`
+  call, same pattern as `_migrate_add_metadata_columns`.
+
+**Verified in this sandbox** (not yet on the real Pi DB — see below) against
+a fixture built to match Paul's exact real-world shape: old 3-column
+constraint, three duplicated Netflix titles (one pair with enrichment on
+only one copy, one pair with a stale `removed_at` on only one copy), plus
+one genuinely-unique Disney+ row. After `init_db()`: 7 rows → 4, correct
+title survived with earliest `first_seen_at`/latest `last_seen_at`,
+enrichment preserved, `removed_at` correctly nulled out (active copy won),
+the untouched Disney+ row left exactly alone, constraint text and all three
+indexes confirmed correct via `sqlite_master`. Ran `init_db()` a second time
+to confirm the migration no-ops on an already-migrated DB. Simulated a
+third re-scrape with `external_id` still `NULL` afterward — row count
+stayed at 4 (updated in place), confirming the bug can't recur.
+
+**Not yet done:** running this against the real Pi database. Requires a
+`docker build` (the scraper image bakes in `src/` at build time — a bare
+`git pull` on the Pi's source checkout doesn't reach code already inside a
+built image) and then a way to trigger `init_db()` without a live browser
+scrape — `python -m nowplay.cli list <platform>` does this, since it calls
+`db.init_db()` but never touches Playwright/a scraper's `run()`. Note the
+website's Flask app deliberately never calls `init_db()` itself (staying
+strictly read-only, per Hosting & Architecture), so this migration will
+only actually run via the scraper image, not by itself over time.
+
 ## Working style for this project
 - Conclusions-first, structured responses.
 - Honest, balanced technical assessment — flag risk and uncertainty rather than

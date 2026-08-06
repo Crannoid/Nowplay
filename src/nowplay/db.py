@@ -55,6 +55,10 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_watchlist_metadata ON watchlist_items (title_metadata_id)"
     )
+    # Must run after the metadata-columns migration above (it rebuilds the
+    # table and needs those columns to already exist to carry them over) —
+    # see the function's own docstring for what it fixes and why.
+    _migrate_dedupe_and_fix_watchlist_unique(conn)
     conn.commit()
 
 
@@ -77,12 +81,143 @@ def _migrate_add_metadata_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE watchlist_items ADD COLUMN metadata_checked_at TEXT")
 
 
+def _migrate_dedupe_and_fix_watchlist_unique(conn: sqlite3.Connection) -> None:
+    """Fix the UNIQUE(platform, title, external_id) bug on an already-deployed DB.
+
+    Found 2026-08-06 against Paul's real containerHost DB: SQL treats two
+    NULLs as non-equal for uniqueness, so a re-scrape never conflicted for
+    any platform whose external_id came back NULL (Netflix intermittently,
+    Prime Video always — see schema.sql's comment on the corrected
+    constraint) — every run inserted a fresh duplicate row instead of
+    updating the existing one. Confirmed: every Netflix title had exactly
+    two rows, both external_id NULL, ~76s apart (two scrapes in the same
+    session).
+
+    SQLite can't ALTER a table-level UNIQUE constraint in place — the
+    standard fix is rename-recreate-copy-drop, same shape as any other
+    SQLite schema migration that changes more than a column. Detects
+    whether it's needed by reading the table's own stored CREATE TABLE
+    text (PRAGMA table_info doesn't expose table-level UNIQUE constraints,
+    only columns), so this is a no-op once applied — safe to run on every
+    init_db() call, same as _migrate_add_metadata_columns above.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watchlist_items'"
+    ).fetchone()
+    if row is None or "UNIQUE (platform, title, external_id)" not in (row["sql"] or ""):
+        return  # already migrated, or a brand-new DB that never had the bug
+
+    # 1. Merge duplicate (platform, title) rows BEFORE rebuilding with the
+    #    stricter constraint — otherwise the copy-over INSERT below would
+    #    itself violate the new UNIQUE(platform, title).
+    dupes = conn.execute(
+        """
+        SELECT platform, title FROM watchlist_items
+        GROUP BY platform, title HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+
+    for d in dupes:
+        rows = conn.execute(
+            "SELECT * FROM watchlist_items WHERE platform = ? AND title = ? ORDER BY first_seen_at",
+            (d["platform"], d["title"]),
+        ).fetchall()
+        keep_id = rows[0]["id"]
+
+        # Any duplicate still active (removed_at IS NULL) means the title is
+        # genuinely still on the watchlist — prefer that over a stale
+        # removed_at from a copy that happened to get marked removed by a
+        # different scrape run. Keep whichever enrichment work already
+        # exists rather than discarding it by picking an unenriched copy.
+        removed_ats = [r["removed_at"] for r in rows]
+        merged_removed_at = None if any(r is None for r in removed_ats) else min(
+            r for r in removed_ats if r is not None
+        )
+        merged_metadata_id = next((r["title_metadata_id"] for r in rows if r["title_metadata_id"] is not None), None)
+        merged_checked_at = next((r["metadata_checked_at"] for r in rows if r["metadata_checked_at"] is not None), None)
+        merged_external_id = next((r["external_id"] for r in rows if r["external_id"]), None)
+        merged_date_added = next((r["date_added"] for r in rows if r["date_added"]), None)
+
+        conn.execute(
+            """
+            UPDATE watchlist_items
+            SET first_seen_at = (SELECT MIN(first_seen_at) FROM watchlist_items WHERE platform = ? AND title = ?),
+                last_seen_at  = (SELECT MAX(last_seen_at)  FROM watchlist_items WHERE platform = ? AND title = ?),
+                removed_at = ?, title_metadata_id = ?, metadata_checked_at = ?,
+                external_id = ?, date_added = ?
+            WHERE id = ?
+            """,
+            (
+                d["platform"], d["title"], d["platform"], d["title"],
+                merged_removed_at, merged_metadata_id, merged_checked_at,
+                merged_external_id, merged_date_added, keep_id,
+            ),
+        )
+        other_ids = [r["id"] for r in rows if r["id"] != keep_id]
+        conn.executemany("DELETE FROM watchlist_items WHERE id = ?", [(i,) for i in other_ids])
+
+    # 2. Rebuild the table itself with the corrected constraint.
+    conn.execute("ALTER TABLE watchlist_items RENAME TO watchlist_items_old")
+    conn.execute(
+        """
+        CREATE TABLE watchlist_items (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform            TEXT NOT NULL,
+            external_id         TEXT,
+            title               TEXT NOT NULL,
+            media_type          TEXT,
+            date_added          TEXT,
+            raw_json            TEXT,
+            first_seen_at       TEXT NOT NULL,
+            last_seen_at        TEXT NOT NULL,
+            removed_at          TEXT,
+            title_metadata_id   INTEGER REFERENCES title_metadata(id) ON DELETE SET NULL,
+            metadata_checked_at TEXT,
+            UNIQUE (platform, title)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO watchlist_items
+            (id, platform, external_id, title, media_type, date_added,
+             raw_json, first_seen_at, last_seen_at, removed_at,
+             title_metadata_id, metadata_checked_at)
+        SELECT id, platform, external_id, title, media_type, date_added,
+               raw_json, first_seen_at, last_seen_at, removed_at,
+               title_metadata_id, metadata_checked_at
+        FROM watchlist_items_old
+        """
+    )
+    conn.execute("DROP TABLE watchlist_items_old")
+
+    # Dropping watchlist_items_old also drops every index that was still
+    # attached to it (idx_watchlist_platform/idx_watchlist_removed/
+    # idx_watchlist_metadata all followed the RENAME, then died with the
+    # DROP) — recreate them on the new table. IF NOT EXISTS makes this safe
+    # regardless of what init_db() already tried to create before this
+    # function ran.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_platform ON watchlist_items (platform)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_removed ON watchlist_items (removed_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_metadata ON watchlist_items (title_metadata_id)")
+    conn.commit()
+
+
 def upsert_items(conn: sqlite3.Connection, items: list[WatchlistItem]) -> None:
     """Insert new items, refresh last_seen_at on existing ones.
 
     Does NOT mark anything as removed — call mark_removed_for_platform
     separately once a full scrape of a platform completes, so a partial/failed
     scrape can't wipe out items that are still genuinely on the watchlist.
+
+    Conflict target is (platform, title) only — NOT external_id (fixed
+    2026-08-06, see schema.sql's comment on the UNIQUE constraint). It used
+    to include external_id, but SQL never treats two NULLs as equal for
+    uniqueness, so any platform whose external_id came back NULL (Netflix
+    sometimes, Prime Video always) never actually conflicted on a re-scrape —
+    every run inserted a fresh duplicate row instead of updating the
+    existing one. external_id is still stored and refreshed below; it's just
+    no longer part of the identity a row is matched on.
     """
     now = _now()
     for item in items:
@@ -92,11 +227,15 @@ def upsert_items(conn: sqlite3.Connection, items: list[WatchlistItem]) -> None:
                 (platform, external_id, title, media_type, date_added,
                  raw_json, first_seen_at, last_seen_at, removed_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
-            ON CONFLICT (platform, title, external_id) DO UPDATE SET
+            ON CONFLICT (platform, title) DO UPDATE SET
                 last_seen_at = excluded.last_seen_at,
                 media_type   = excluded.media_type,
                 date_added   = excluded.date_added,
                 raw_json     = excluded.raw_json,
+                -- COALESCE, not a flat overwrite: once a real external_id is
+                -- captured, don't let a later scrape's NULL (e.g. a
+                -- transient DOM miss) clobber it back to unknown.
+                external_id  = COALESCE(excluded.external_id, external_id),
                 removed_at   = NULL
             """,
             (

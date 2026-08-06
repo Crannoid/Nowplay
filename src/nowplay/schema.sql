@@ -38,7 +38,24 @@ CREATE TABLE IF NOT EXISTS watchlist_items (
     metadata_checked_at TEXT,                       -- last enrichment attempt, any outcome incl. no_match —
                                                       -- stops the enrichment step re-querying TMDB every scrape
                                                       -- for a title that's confirmed to have no match
-    UNIQUE (platform, title, external_id)
+
+    -- (platform, title) ONLY — external_id used to be part of this
+    -- constraint but that was a real bug, found 2026-08-06: SQL treats two
+    -- NULLs as non-equal for uniqueness, and external_id comes back NULL
+    -- for Netflix whenever its href doesn't contain a plain numeric path
+    -- segment (and always for Prime Video — see prime_video.py, which never
+    -- sets it). That meant ON CONFLICT never matched on a re-scrape for
+    -- either platform, so every run inserted a fresh duplicate row instead
+    -- of updating the existing one — confirmed against Paul's real DB, every
+    -- Netflix title had exactly two rows, both external_id NULL, timestamps
+    -- ~76s apart from the same session. (platform, title) isn't a new
+    -- assumption either — mark_removed_for_platform() already only ever
+    -- keyed removal on title, so this just makes the constraint match what
+    -- the rest of the code already treated as the real identity. See
+    -- db.py's _migrate_dedupe_and_fix_watchlist_unique() for how an
+    -- already-deployed DB (which has this constraint baked into the table
+    -- itself, not alterable in place) gets fixed.
+    UNIQUE (platform, title)
 );
 
 CREATE INDEX IF NOT EXISTS idx_watchlist_platform ON watchlist_items (platform);
