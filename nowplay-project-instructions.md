@@ -991,6 +991,27 @@ Smoke-tested (HTTP 200, both fonts present in the rendered `<link>`,
 wordmark/tagline markup intact) in this sandbox; not yet seen on a real
 device/browser.
 
+## Header border + series-before-films sort (2026-08-06, same day)
+
+Two small follow-ups after seeing the site on a real device:
+
+- **Header band border**: flat sky-blue was dissolving into the dark body
+  with no defined edge. Added `border-bottom: 6px solid var(--rust)` to
+  `.header-band` (option "B" of four textured-band mockups shown to Paul —
+  simplest fix, not the checkered-flag/cloud/pennant alternatives).
+- **Sort order**: was straight alphabetical within every section; changed to
+  series-then-films-then-alphabetical per Paul's request. `website/app.py`
+  gained `TYPE_SORT_ORDER = {"SERIES": 0, "FILM": 1, "": 2}` and a
+  `sort_key()` helper, used for both the New section and every platform
+  section. Unclassified items (`type_label == ""`, e.g. anything TMDB hasn't
+  matched yet) sort last, not first — an assumption, not a stated
+  requirement, worth flagging in case Paul wants them surfaced instead.
+
+Both smoke-tested against fixtures in this sandbox (mixed-type fixture
+confirmed series/films/unclassified grouping; CSS confirmed present) — not
+yet seen live. Website-only change, no scraper rebuild needed:
+`git pull` + `docker compose up -d --build website` on the Pi.
+
 ## Working style for this project
 - Conclusions-first, structured responses.
 - Honest, balanced technical assessment — flag risk and uncertainty rather than

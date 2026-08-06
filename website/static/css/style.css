@@ -49,6 +49,9 @@ body {
 .header-band {
   background: var(--sky-blue);
   padding: 28px 20px 22px;
+  /* Flat sky-blue was dissolving into the dark body below it with nothing
+     to mark where the band ends — a defined edge, not decoration. */
+  border-bottom: 6px solid var(--rust);
 }
 
 .wordmark {

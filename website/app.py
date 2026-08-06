@@ -81,6 +81,17 @@ def media_type_label(row) -> str:
     return ""
 
 
+# Sort order within every section: series before films before anything
+# unclassified, alphabetical within each group (Paul's call, 2026-08-06 —
+# was straight alphabetical before). type_label is already the FILM/SERIES/
+# "" string media_type_label() computes, so this just orders those buckets.
+TYPE_SORT_ORDER = {"SERIES": 0, "FILM": 1, "": 2}
+
+
+def sort_key(card: dict) -> tuple:
+    return (TYPE_SORT_ORDER.get(card["type_label"], 2), card["title"])
+
+
 def to_card(row) -> dict:
     return {
         "id": row["id"],
@@ -105,14 +116,14 @@ def index():
 
     new_items = sorted(
         (to_card(r) for r in rows if r["first_seen_at"] >= cutoff),
-        key=lambda c: c["title"],
+        key=sort_key,
     )
 
     by_platform: "OrderedDict[str, list[dict]]" = OrderedDict()
     for platform in PLATFORM_ORDER:
         items = sorted(
             (to_card(r) for r in rows if r["platform"] == platform),
-            key=lambda c: c["title"],
+            key=sort_key,
         )
         if items:
             by_platform[platform] = items
