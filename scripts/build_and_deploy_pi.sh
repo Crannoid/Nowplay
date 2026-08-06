@@ -3,21 +3,24 @@
 # scraper image there natively, rather than building on this (x86) machine
 # and shipping a tarball the way scripts/build_and_deploy_tower.sh did.
 #
-# DEFAULT CHOICE, NOT CONFIRMED WITH PAUL: building natively on the Pi avoids
-# cross-architecture emulation entirely — this build machine is x86, the Pi
-# is arm64, and a plain `docker build` here produces an amd64 image that
-# won't run natively there. The alternative is cross-compiling with
-# `docker buildx build --platform linux/arm64` and shipping the result via
-# save/scp/load (the pattern build_and_deploy_tower.sh used, which only
-# worked because Tower was also x86) — that needs buildx + QEMU binfmt set
-# up on this machine and is slower. Native build was picked because
-# Playwright's own native-venv install already proved the Pi has the
-# resources for this workload (see Hosting & Architecture in Notion) and it
-# sidesteps the emulation question entirely, but this hasn't been run for
-# real yet (no SSH access to the Pi from this session) — first real run is
-# the actual confirmation. If Portainer's own image-build-from-Compose flow
-# is preferred instead of this script, that's a reasonable alternative not
-# implemented here.
+# Building natively on the Pi avoids cross-architecture emulation entirely —
+# this build machine is x86, the Pi is arm64, and a plain `docker build` here
+# would produce an amd64 image that won't run natively there. The
+# alternative is cross-compiling with `docker buildx build --platform
+# linux/arm64` and shipping the result via save/scp/load (the pattern
+# build_and_deploy_tower.sh used, which only worked because Tower was also
+# x86) — that needs buildx + QEMU binfmt set up on this machine and is
+# slower. If Portainer's own image-build-from-Compose flow is preferred
+# instead of this script, that's a reasonable alternative not implemented
+# here.
+#
+# CONFIRMED WORKING (2026-08-06): `docker build` + a full `scrape all`
+# (including TMDB enrichment) run successfully on real Pi hardware, using
+# python:3.12-bookworm + `playwright install --with-deps firefox` as the
+# base (see Dockerfile) rather than mcr.microsoft.com/playwright/python,
+# whose arm64/multi-arch support was unconfirmed. That test used a manual
+# source download rather than this script's rsync step, so the rsync path
+# itself is still unexercised — worth confirming on the next real deploy.
 #
 # Usage:
 #   PI_HOST=192.168.68.101 PI_USER=pi ./scripts/build_and_deploy_pi.sh
@@ -31,12 +34,16 @@ set -euo pipefail
 IMAGE_NAME="nowplay-scraper:latest"
 PI_HOST="${PI_HOST:-192.168.68.101}"
 PI_USER="${PI_USER:-pi}"
-REMOTE_DIR="/home/${PI_USER}/nowplay-build"
+# Confirmed 2026-08-06 (Paul's actual layout on containerHost): source lives
+# at ~/Source/Nowplay, kept separate from the Docker/runtime data below.
+REMOTE_DIR="${REMOTE_DIR:-/home/${PI_USER}/Source/Nowplay}"
 # Shared with the website container once it exists — see "DB access: direct
-# write, no write API" in Hosting & Architecture. Confirm this matches
-# wherever the website container's compose/run config points, or both
+# write, no write API" in Hosting & Architecture. Confirmed 2026-08-06: this
+# is ~/Docker/Nowplay directly (no `data` subfolder) — nowplay.db, auth
+# state.json files, and debug dumps all sit right in this directory. Must
+# match wherever the website container's compose/run config points, or both
 # containers won't actually see the same nowplay.db.
-DATA_DIR="${DATA_DIR:-/home/${PI_USER}/nowplay-data}"
+DATA_DIR="${DATA_DIR:-/home/${PI_USER}/Docker/Nowplay}"
 
 cd "$(dirname "$0")/.."
 

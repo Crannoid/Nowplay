@@ -196,3 +196,38 @@ def list_active(conn: sqlite3.Connection, platform: Optional[str] = None) -> lis
     return conn.execute(
         "SELECT * FROM watchlist_items WHERE removed_at IS NULL ORDER BY platform, title"
     ).fetchall()
+
+
+# Website read (added 2026-08-06, building Phase 3). Deliberately lives here
+# rather than as raw SQL in website/app.py — db.py is already this project's
+# one place that knows the schema (see module docstring: "no ORM... easier
+# to reason about"), and the website is a second reader of the same tables
+# that should share that single source of truth rather than duplicate the
+# join logic. Read-only, like every other function in this module used by
+# the website — see Hosting & Architecture in Notion ("website is read-only,
+# enforced by code discipline") for why nothing here writes.
+def list_active_with_metadata(conn: sqlite3.Connection, platform: Optional[str] = None) -> list[sqlite3.Row]:
+    """Like list_active(), but LEFT JOINs title_metadata for poster/overview/year.
+
+    LEFT JOIN (not INNER) because enrichment is best-effort — items with no
+    TMDB match yet (title_metadata_id IS NULL) or not checked at all should
+    still show up, just without a poster/overview. tm.media_type is aliased
+    to tmdb_media_type so callers can tell it apart from watchlist_items' own
+    (less reliable — see enrich.py's normalize_media_type) media_type column.
+    """
+    query = """
+        SELECT wi.*,
+               tm.media_type   AS tmdb_media_type,
+               tm.title        AS tmdb_title,
+               tm.release_year AS release_year,
+               tm.poster_url   AS poster_url,
+               tm.overview     AS overview
+        FROM watchlist_items wi
+        LEFT JOIN title_metadata tm ON wi.title_metadata_id = tm.id
+        WHERE wi.removed_at IS NULL
+    """
+    if platform:
+        return conn.execute(
+            query + " AND wi.platform = ? ORDER BY wi.title", (platform,)
+        ).fetchall()
+    return conn.execute(query + " ORDER BY wi.platform, wi.title").fetchall()

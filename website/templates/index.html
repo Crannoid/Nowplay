@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nowplay</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@600;700&family=Karla:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+  <header class="header-band">
+    <h1 class="wordmark">Nowplay</h1>
+    <p class="tagline">Everything queued, in one place</p>
+  </header>
+
+  <main class="content">
+
+    {% if total == 0 %}
+      <p class="empty-state">
+        Nothing in the watchlist yet. Once <code>scrape all</code> has run
+        on containerHost, titles will show up here.
+      </p>
+    {% endif %}
+
+    {% if new_items %}
+      <section class="watch-section" data-section="new">
+        <button class="section-toggle" type="button" aria-expanded="true">
+          <span class="chevron">▾</span>
+          <span class="section-label">New</span>
+          <span class="count-pill count-pill--active">{{ new_items|length }}</span>
+        </button>
+        <div class="card-grid">
+          {% for item in new_items %}
+            {% include "_card.html" %}
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
+
+    {% for platform, items in by_platform.items() %}
+      {% set is_open = (platform == first_open_platform) %}
+      <section class="watch-section" data-section="{{ platform }}">
+        <button class="section-toggle" type="button" aria-expanded="{{ 'true' if is_open else 'false' }}">
+          <span class="chevron">{{ '▾' if is_open else '▸' }}</span>
+          <span class="section-label">{{ items[0].platform_label }}</span>
+          <span class="count-pill {{ 'count-pill--active' if is_open else 'count-pill--muted' }}">{{ items|length }}</span>
+        </button>
+        <div class="card-grid" {{ '' if is_open else 'hidden' }}>
+          {% for item in items %}
+            {% include "_card.html" %}
+          {% endfor %}
+        </div>
+      </section>
+    {% endfor %}
+
+  </main>
+
+  <!-- Detail bottom sheet — single reusable element, populated from the
+       clicked card's data-* attributes by app.js. No server round-trip:
+       everything needed is already rendered into the card. -->
+  <div class="sheet-backdrop" id="sheet-backdrop" hidden></div>
+  <div class="detail-sheet" id="detail-sheet" hidden>
+    <div class="sheet-handle"></div>
+    <div class="sheet-body">
+      <div class="sheet-poster" id="sheet-poster"></div>
+      <div class="sheet-info">
+        <h2 id="sheet-title"></h2>
+        <p class="sheet-meta" id="sheet-meta"></p>
+        <p class="sheet-overview" id="sheet-overview"></p>
+        <div class="sheet-actions">
+          <a class="btn btn-primary" id="sheet-open-link" href="#" target="_blank" rel="noopener">Open in <span id="sheet-open-platform"></span></a>
+          <button class="btn btn-secondary" id="sheet-mark-seen" type="button" disabled
+                  title="Not wired up yet — the site is read-only and there's no 'seen' column in the DB yet. See project notes.">
+            Mark seen
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

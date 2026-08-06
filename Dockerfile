@@ -13,9 +13,12 @@
 # Hub tag listing is empty. Rather than gamble on that image pulling/running
 # correctly on the Pi, this uses the same `playwright install --with-deps`
 # approach already confirmed working natively (via venv) on the Pi itself —
-# see Hosting & Architecture in Notion. Not independently tested as a built
-# image on the Pi yet (no SSH access from this session) — first `docker
-# build` + run there is still the real confirmation.
+# see Hosting & Architecture in Notion.
+#
+# CONFIRMED (2026-08-06): `docker build` succeeded on real Pi hardware, and a
+# full `scrape all` run (including TMDB enrichment) worked end-to-end in the
+# resulting container. The arm64 risk this section originally flagged is
+# resolved, not just theoretically mitigated.
 #
 # Bonus: this also removes the old version-pinning trap. Previously the pip
 # `playwright` version had to exactly match the browser binaries baked into

@@ -761,6 +761,124 @@ afterward from inside this sandbox, so it looks benign, but it wasn't
 possible to verify against a real git client outside the sandbox — worth a
 quick check that `git status` still works normally on Paul's own machine.
 
+## First real deploy on containerHost confirmed working (2026-08-06, same day)
+
+Paul downloaded the source to the Pi and ran the container for real — the actual
+confirmation every "not yet tested on the Pi" caveat above was waiting on.
+
+- **`docker build` succeeded on real Pi hardware.** Confirms the arm64 base-image
+  fix above (`python:3.12-bookworm` + `playwright install --with-deps firefox`)
+  actually works, not just "should work per Playwright's docs" — the
+  `mcr.microsoft.com/playwright/python` arm64 risk this was written to avoid is
+  now moot either way.
+- **A full `scrape all` run, including the folded-in TMDB enrichment step,
+  worked end-to-end** — the "not yet done: a full scrape all end-to-end run on
+  containerHost" item from the previous entry is done.
+- **Concrete directory layout confirmed:** source checkout at `~/Source/Nowplay`,
+  kept separate from the shared Docker/runtime data directory at
+  `~/Docker/Nowplay` directly (no `data` subfolder) — this is what gets
+  bind-mounted to `/app/data` and holds `nowplay.db`, auth `state.json` files,
+  and debug dumps. Resolves the "concrete shared-volume path on the Pi" item.
+  `docker-compose.yml` and `scripts/build_and_deploy_pi.sh` updated to use
+  this path (`${HOME}/Docker/Nowplay` / `/home/${PI_USER}/Docker/Nowplay`
+  respectively) instead of the earlier placeholder paths.
+- **One verification hiccup, not a real bug:** running `sqlite3 data/nowplay.db
+  "..."` from the source checkout (`~/Source/Nowplay`) failed with "unable to
+  open database file" — the DB isn't there, it's at `~/Docker/Nowplay/nowplay.db`.
+  Worth remembering for next time: verification commands need the Docker data
+  path, not the source checkout path — they're deliberately two different
+  directories now.
+
+Still not done: `scripts/build_and_deploy_pi.sh`'s rsync step itself is
+unexercised (this test used a manual source download instead), and the website
+container still doesn't exist.
+
+## Website (Phase 3) built — first working version (2026-08-06)
+
+Built the read-only website against the existing wireframes (`Design/Watchlist
+Colour Wireframe.png`, `Design/Watchlist Wireframes-selection.png`) and the
+Notion Design System page. Lives in a new `website/` folder; not yet run for
+real on containerHost (built and smoke-tested in this sandbox against a
+fixture DB only — see below).
+
+**Decisions made (with Paul, before building):**
+- **Backend: Flask + Jinja2**, not FastAPI or stdlib `http.server` — closest
+  match to this project's existing minimal-deps stance (`db.py`, `cli.py`)
+  while still getting real templating. Served via `waitress` in the
+  container (Flask's dev server isn't meant for an always-on process).
+- **Theme: dark navy**, not the Design System doc's stated cream default —
+  matches `Watchlist Colour Wireframe.png` directly, which is built entirely
+  in the dark variant. Cream/light was explicitly not chosen for v1.
+- **V1 scope: full wireframe** — accordion sections (New + per-platform) and
+  the tap-through detail bottom sheet, not just the list view.
+
+**Built:**
+- `src/nowplay/db.py` — added `list_active_with_metadata()`, a read-only
+  LEFT JOIN against `title_metadata` (poster/overview/year). Kept in `db.py`
+  rather than as raw SQL in the website, so there's still one place that
+  knows the schema.
+- `website/app.py` — Flask app, single `/` route. Buckets active items into
+  a "New" section (see heuristic below) plus one section per platform in a
+  fixed display order; a platform with zero active rows just doesn't render
+  a section.
+- `website/templates/`, `website/static/` — dark-navy theme per the Design
+  System palette (`--ink-navy`, `--sky-blue`, `--cream`, `--rust`,
+  `--mustard`, `--stone` tokens), Oswald (headers/labels) + Karla (body) via
+  Google Fonts. Accordion + detail sheet interactions are plain JS, no
+  fetch — every card already carries its detail-sheet data in `data-*`
+  attributes server-rendered by `_card.html`.
+- `website/Dockerfile` + `docker-compose.yml` — website service uncommented.
+  Build context is the **repo root** (not `./website`), so it can install
+  the `nowplay` package `--no-deps` (stdlib-only `db.py`, no need to pull in
+  Playwright/Firefox for a container that never launches a browser).
+
+**Two gaps flagged rather than silently resolved — need a call from Paul:**
+
+1. **"MARK SEEN" has no backing.** Both wireframes show a "MARK SEEN" button
+   in the detail sheet, but `schema.sql` has no seen/watched column, and the
+   2026-08-06 architecture decision ("DB access and container topology") has
+   the website as **read-only by design** — a mark-seen write would
+   reintroduce the two-writer race that decision was written to avoid.
+   Built the button **present but disabled** (with an explanatory tooltip)
+   rather than faking it or quietly adding a write path. Needs a real
+   decision: add a `seen_at` column + decide who's allowed to write it
+   (website gets narrow write access to just that column? scraper polls
+   some other signal instead? feature dropped for v1?), before wiring it up
+   for real.
+2. **Header text colour disagrees with the Design System doc.** The doc's
+   Components section says the header band's wordmark/tagline render "in
+   cream." The actual `Watchlist Colour Wireframe.png` shows them in dark
+   ink navy on the sky-blue band. Built to match the wireframe (the more
+   concrete, presumably-more-recent artifact) — the Design System page's
+   text is probably just stale and worth a one-line fix, not a real
+   disagreement about intent, but flagging rather than assuming.
+
+**"OPEN IN <PLATFORM>" links to each platform's watchlist page**, not a
+per-title deep link — no scraper captures a confirmed, working per-title URL
+on every platform (Netflix's `external_id` might support `/watch/<id>`, but
+that was never verified against a live session). Rather than guess a URL
+shape that could 404 on Paul's phone, this uses the same watchlist URL each
+scraper already navigates to, confirmed working for all five.
+
+**"New" section is a heuristic, not a real flag**: items with `first_seen_at`
+within the last 3 days, regardless of platform — `schema.sql` has no
+`is_new` column. Tunable (`NEW_WINDOW` in `app.py`), not validated against
+any "correct" definition yet.
+
+**Verification done this session:** built a fixture SQLite DB (stdlib
+sqlite3 script mirroring real scraper output — enriched item with a poster,
+enriched item without one, unenriched item, one item backdated outside the
+New window) and ran the actual Flask app against it in this sandbox,
+confirming via `curl` + grepping the rendered HTML that: New/platform
+bucketing is correct, FILM/SERIES labelling prefers TMDB's classification
+over the scraped one, the poster-present vs. poster-absent card markup both
+render, and the first-platform-section-open / rest-collapsed default
+matches the wireframe. **Not yet done:** an actual `docker build` + run on
+containerHost — same "confirmed locally, not yet run in the container"
+caveat as every other component in this project so far. Needs a real
+`docker compose up` on the Pi next, then a phone-browser check against
+`http://<pi-ip>:8080`.
+
 ## Working style for this project
 - Conclusions-first, structured responses.
 - Honest, balanced technical assessment — flag risk and uncertainty rather than

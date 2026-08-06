@@ -14,13 +14,11 @@
 #     code discipline rather than a read-only mount (SQLite's WAL mode needs
 #     write access to the directory even for readers).
 #
-# The website service below is commented out — no front end has been built
-# yet (Phase 3, not started — see Project Plan). Uncomment and fill in
-# `build`/`image` once it exists; it should mount the same `nowplay_data`
-# volume read-write at the filesystem level (Docker doesn't have a clean
-# per-service read-only view of one named volume shared with a read-write
-# writer), with "never write" enforced in the website's own code, not by the
-# mount.
+# Website service (Phase 3 — built 2026-08-06, see Project Plan). Mounts the
+# same ${HOME}/Docker/Nowplay path read-write at the filesystem level (Docker
+# doesn't have a clean per-service read-only view of one bind mount shared
+# with a read-write writer) — "never write" is enforced in the website's own
+# code (app.py never calls a write function in db.py), not by the mount.
 
 services:
   scraper:
@@ -33,7 +31,16 @@ services:
     # unattended on a schedule is separate, not-yet-done work.
     restart: "no"
     volumes:
-      - nowplay_data:/app/data
+      # Confirmed 2026-08-06 (first real test on containerHost): the shared
+      # data directory is ~/Docker/Nowplay directly, no `data` subfolder —
+      # holds nowplay.db, auth state.json files, and debug dumps. Source
+      # checkout is separately at ~/Source/Nowplay (that's where this
+      # compose file itself lives; `build: .` above refers to it).
+      # ${HOME} resolves via the shell's environment when `docker compose`
+      # runs — works as long as it's run as the normal Pi user, not e.g.
+      # via a stripped-environment sudo. Override with a .env file
+      # (NOWPLAY_DATA_DIR=...) if that ever doesn't hold.
+      - ${NOWPLAY_DATA_DIR:-${HOME}/Docker/Nowplay}:/app/data
     environment:
       # Required for the TMDB enrichment step folded into `scrape all` —
       # skipped (not fatal) if unset. Set via Portainer's environment
@@ -41,27 +48,20 @@ services:
       # committed — see .gitignore).
       - TMDB_API_KEY=${TMDB_API_KEY:-}
 
-  # website:
-  #   build: ./website          # path not decided — website tech stack is
-  #                              # still an open item, see Project Plan
-  #   image: nowplay-website:latest
-  #   restart: unless-stopped   # always-on, unlike the scraper
-  #   volumes:
-  #     - nowplay_data:/app/data
-  #   ports:
-  #     - "8080:8080"           # LAN-only — no reverse proxy / external
-  #                              # exposure needed per current scope
-
-volumes:
-  nowplay_data:
-    # Named volume rather than a bind mount to a specific host path, so this
-    # file doesn't hard-code a filesystem layout Paul hasn't confirmed yet
-    # (see "Concrete shared-volume path on the Pi" in Hosting & Architecture,
-    # still an open item). If a specific host path is preferred instead
-    # (e.g. for easier backup/inspection), replace this with:
-    #   nowplay_data:
-    #     driver: local
-    #     driver_opts:
-    #       type: none
-    #       o: bind
-    #       device: /path/on/the/pi/nowplay-data
+  website:
+    build:
+      # Context is the repo root, not ./website — the website's Dockerfile
+      # needs ../pyproject.toml and ../src too, to install the nowplay
+      # package (--no-deps, stdlib-only db.py — see website/Dockerfile for
+      # why this doesn't pull in Playwright).
+      context: .
+      dockerfile: website/Dockerfile
+    image: nowplay-website:latest
+    restart: unless-stopped   # always-on, unlike the scraper
+    volumes:
+      - ${NOWPLAY_DATA_DIR:-${HOME}/Docker/Nowplay}:/app/data
+    environment:
+      - NOWPLAY_DB_PATH=/app/data/nowplay.db
+    ports:
+      - "8080:8080"           # LAN-only — no reverse proxy / external
+                               # exposure needed per current scope

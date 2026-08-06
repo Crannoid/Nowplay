@@ -1,0 +1,21 @@
+<!-- Poster card. Included from both the New section and each platform
+     section, so the markup (and its data-* payload for the detail sheet)
+     lives in exactly one place. -->
+<button
+  class="poster-card"
+  type="button"
+  data-title="{{ item.title }}"
+  data-platform-label="{{ item.platform_label }}"
+  data-type-label="{{ item.type_label }}"
+  data-release-year="{{ item.release_year or '' }}"
+  data-poster-url="{{ item.poster_url or '' }}"
+  data-overview="{{ item.overview or '' }}"
+  data-watchlist-url="{{ item.watchlist_url or '' }}"
+>
+  <span class="poster-thumb" {% if item.poster_url %}style="background-image:url('{{ item.poster_url }}')"{% endif %}>
+    {% if not item.poster_url %}<span class="poster-placeholder"></span>{% endif %}
+    <span class="platform-badge">{{ item.platform_label }}</span>
+  </span>
+  <span class="card-title">{{ item.title }}</span>
+  {% if item.type_label %}<span class="card-type">{{ item.type_label }}</span>{% endif %}
+</button>
