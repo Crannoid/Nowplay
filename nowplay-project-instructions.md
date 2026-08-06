@@ -947,6 +947,50 @@ website's Flask app deliberately never calls `init_db()` itself (staying
 strictly read-only, per Hosting & Architecture), so this migration will
 only actually run via the scraper image, not by itself over time.
 
+## Header band redesigned with Paul (2026-08-06, same day)
+
+Paul found the header (wordmark + tagline) "very dull" once actually built —
+correctly: plain ink-navy text on sky-blue, matching the wireframe exactly,
+has low contrast (similar lightness) and no visual interest. Iterated
+through several options live with him (shown as inline mockups, not
+committed to the site until agreed):
+
+- Tried cream text (the doc's original spec), a rust wordmark, and a
+  cream-with-navy-shadow "poster" treatment — Paul picked the rust wordmark
+  direction but wanted a bolder font than Oswald.
+- Tried four display fonts for the wordmark (Anton, Alfa Slab One, Racing
+  Sans One, Bungee) — **Racing Sans One** chosen specifically because it's a
+  motorsport-poster face, a direct callback to the Beaulieu Motor Museum
+  reference photo the palette itself comes from (see Design System in
+  Notion), not just "a bold font."
+- Flat rust-on-sky-blue then tested as hard to read (confirmed: rust
+  `#E2622A` and sky blue `#2FA8CC` are similar lightness, so a flat fill has
+  weak contrast even though it *looks* like a strong color pairing) — fixed
+  with a navy drop shadow behind the rust letters, which is the same
+  outline/shadow trick the actual Beaulieu poster uses for its red lettering
+  on blue sky, not an invented fix.
+- Tagline needed a font too, once the wordmark got more characterful —
+  tried Special Elite (typewriter), Amatic SC (hand-lettered caps), Yeseva
+  One (cinema-marquee serif), and Sail (script, closest to Humber Cycles'
+  actual logo lettering). **Yeseva One** chosen.
+
+**Final header treatment** (`website/static/css/style.css`, `.wordmark` /
+`.tagline`): wordmark in Racing Sans One, rust fill, `3px 3px 0` navy drop
+shadow, uppercase, 1px letter-spacing; tagline in Yeseva One, cream, full
+opacity (no longer dimmed — the previous Karla tagline used `opacity: 0.85`,
+dropped since a display serif needs to read clearly at this size). New
+`--font-wordmark`/`--font-tagline` CSS variables added, scoped to the header
+only — Oswald/Karla remain the system fonts everywhere else (section
+headers, meta labels, buttons, body copy). Google Fonts `<link>` in
+`templates/index.html` updated to also load Racing Sans One + Yeseva One.
+
+This supersedes the earlier "built to match the wireframe, doc says cream"
+discrepancy note above — the header is now a deliberate evolution past both
+the wireframe and the original doc text, not an attempt to match either.
+Smoke-tested (HTTP 200, both fonts present in the rendered `<link>`,
+wordmark/tagline markup intact) in this sandbox; not yet seen on a real
+device/browser.
+
 ## Working style for this project
 - Conclusions-first, structured responses.
 - Honest, balanced technical assessment — flag risk and uncertainty rather than

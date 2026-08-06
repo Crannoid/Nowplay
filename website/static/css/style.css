@@ -2,12 +2,19 @@
    background variant (matches Design/Watchlist Colour Wireframe.png, chosen
    over the doc's stated cream default — see project notes for why).
 
-   One deviation from the written Design System doc, kept deliberately:
-   the doc says the header wordmark/tagline render "in cream", but the
-   actual colour wireframe shows them in dark ink navy on the sky-blue
-   band. Built to match the wireframe (the more concrete artifact) — worth
-   updating the doc's text to match, flagged in project notes rather than
-   silently ignored. */
+   Header band (wordmark + tagline) went through a further design pass with
+   Paul on top of the original wireframe (2026-08-06) — it's no longer
+   trying to match the wireframe's plain ink-navy-on-sky-blue text, which
+   read as flat/dull once actually built. Landed on: Racing Sans One
+   wordmark (a motorsport-poster face, chosen deliberately for the direct
+   link back to the Beaulieu Motor Museum reference photo the palette comes
+   from) in rust with a navy drop shadow — same outline/shadow technique the
+   real Beaulieu poster uses for its red lettering on blue sky, needed here
+   too since flat rust-on-sky-blue tested as hard to read (similar
+   lightness, low contrast) — plus a Yeseva One tagline for a vintage
+   cinema-marquee feel. Oswald/Karla remain the system fonts everywhere else
+   (section headers, meta labels, body, buttons) — this swap is scoped to
+   the header band only. See project notes for the full option trail. */
 
 :root {
   --ink-navy: #1B2A38;
@@ -23,6 +30,8 @@
 
   --font-display: "Oswald", sans-serif;
   --font-body: "Karla", sans-serif;
+  --font-wordmark: "Racing Sans One", sans-serif;
+  --font-tagline: "Yeseva One", serif;
 }
 
 * { box-sizing: border-box; }
@@ -44,19 +53,20 @@ body {
 
 .wordmark {
   margin: 0;
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 2rem;
-  letter-spacing: 0.3px;
+  font-family: var(--font-wordmark);
+  font-size: 2.2rem;
+  letter-spacing: 1px;
   text-transform: uppercase;
-  color: var(--ink-navy);
+  color: var(--rust);
+  /* Rust-on-sky-blue alone tested as low-contrast (similar lightness) — the
+     navy shadow is what makes it readable, not just decorative. */
+  text-shadow: 3px 3px 0 var(--ink-navy);
 }
 
 .tagline {
-  margin: 4px 0 0;
-  font-family: var(--font-body);
-  color: var(--ink-navy);
-  opacity: 0.85;
+  margin: 8px 0 0;
+  font-family: var(--font-tagline);
+  color: var(--cream);
 }
 
 /* ---------- Layout ---------- */
