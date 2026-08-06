@@ -4,6 +4,15 @@ __pycache__/
 venv/
 sync.ffs*
 
+# setuptools regenerates this on every `pip install -e .` — including the
+# native venv install on containerHost's own host for scripts/login.py (see
+# Login & Session Setup in Notion). Being tracked meant every such install
+# left local modifications that blocked `git pull` on the Pi with "local
+# changes would be overwritten by merge" (hit 2026-08-06) — same class of
+# bug as the data/*.db-journal one below, generated/local files that were
+# never meant to be committed in the first place.
+src/nowplay.egg-info/
+
 # Local data: sqlite db + saved login sessions (contain auth cookies — never commit)
 # *.db-journal and the WAL-mode sidecars (*-wal/*-shm, connect() sets
 # PRAGMA journal_mode = WAL — see db.py) weren't covered by `data/*.db`
